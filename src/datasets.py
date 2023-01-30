@@ -72,7 +72,7 @@ class FFPP(Dataset):
             # apply transform
             frame = self.transform(frame)
 
-            return frame, self.labels[idx] * 1
+            return frame, 1 if df_type == 'REAL' else 0
 
         elif self.detection_level == 'video':
             # TODO: random select start time frame
