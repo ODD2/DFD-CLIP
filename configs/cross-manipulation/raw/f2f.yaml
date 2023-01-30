@@ -1,0 +1,21 @@
+tracking:
+  enabled: true
+  project_name: F2F
+  directory: logs/cross-manipulation-raw
+
+data:
+  train:
+    types:
+    - REAL
+    - DF
+    - FS
+    - NT
+  eval:
+    - name: validation
+      types:
+      - REAL
+      - F2F
+
+system:
+  deterministic_training: true
+

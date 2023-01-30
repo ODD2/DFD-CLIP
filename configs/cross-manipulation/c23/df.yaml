@@ -1,0 +1,28 @@
+tracking:
+  enabled: true
+  project_name: DF
+  directory: logs/cross-manipulation-c23
+
+data:
+  train:
+    compressions:
+    - c23
+    types:
+    - REAL
+    - F2F
+    - FS
+    - NT
+  eval:
+    - name: validation
+      compressions:
+      - c23
+      types:
+      - REAL
+      - DF
+
+system:
+  deterministic_training: true
+
+model:
+  decode_stride: 2
+

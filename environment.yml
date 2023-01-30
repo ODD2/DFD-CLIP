@@ -1,0 +1,19 @@
+name: dfd-clip
+channels:
+  - pytorch
+  - nvidia
+  - defaults
+dependencies:
+  - python=3.8
+  - pip
+  - pytorch
+  - torchvision
+  - pytorch-cuda=11.7
+  - pip:
+    - accelerate
+    - evaluate
+    - ftfy
+    - regex
+    - scikit-learn
+    - tensorboard
+    - git+https://github.com/ernestchu/yacs.git
