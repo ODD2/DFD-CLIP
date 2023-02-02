@@ -12,7 +12,7 @@ def update_trackers(agent):
         {
             f'accuracy/{agent.dataloader.dataset.name}': agent.accuracy,
             f'roc_auc/{agent.dataloader.dataset.name}': agent.roc_auc,
-            f'loss/{agent.dataloader.dataset.name}': agent.loss,
+            f'loss/{agent.dataloader.dataset.name}': agent.loss_avg,
         },
         step=agent.steps,
     )
