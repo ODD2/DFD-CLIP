@@ -10,7 +10,7 @@ from accelerate import Accelerator
 from yacs.config import CfgNode as CN
 
 from src.models import Detector
-from src.datasets import FFPP
+from src.datasets import RPPG
 from src.trainer import Trainer
 from src.evaluator import Evaluator
 from src.callbacks.timer import start_timer, end_timer
@@ -35,12 +35,12 @@ def get_config(config_file):
     C.tracking.project_name = None
     C.tracking.default_project_prefix = 'version'
     C.tracking.tool = 'all'
-    C.tracking.main_metric = 'roc_auc' # accuracy | roc_auc
+    C.tracking.main_metric = 'mse' # accuracy | roc_auc
     C.tracking.compare_fn = 'max' # max | min
 
     # data
     C.data = CN()
-    C.data.train = FFPP.get_default_config()
+    C.data.train = RPPG.get_default_config()
     C.data.eval = []
 
     # model
@@ -57,7 +57,7 @@ def get_config(config_file):
         C.merge_from_file(config_file)
 
     # post-process eval datasets
-    C.data.eval = [FFPP.get_default_config().merge_from_other_cfg(d_eval) for d_eval in C.data.eval]
+    C.data.eval = [RPPG.get_default_config().merge_from_other_cfg(d_eval) for d_eval in C.data.eval]
 
     C.freeze()
 
@@ -96,9 +96,6 @@ def register_trainer_callbacks(config, trainer, **kwargs):
         trainer.add_callback('on_batch_end', update_trackers)
         trainer.add_callback('on_training_end', save_model)
 
-    # evaluator
-    trainer.add_callback('on_batch_end', evaluation_proxy, evaluation_interval=config.system.evaluation_interval)
-
     # stdout logger
     trainer.add_callback('on_batch_end',
         lambda trainer: trainer.accelerator.print(f'{trainer.steps} | loss {trainer.loss.mean().item()}, {trainer.batch_duration:.2f}s'))
@@ -106,6 +103,9 @@ def register_trainer_callbacks(config, trainer, **kwargs):
         lambda trainer: trainer.accelerator.print(f'epoch takes {trainer.epoch_duration:.2f}s'))
     trainer.add_callback('on_training_end',
         lambda trainer: trainer.accelerator.print(f'training completed in {timedelta(seconds=trainer.training_duration)}'))
+
+    # evaluator
+    trainer.add_callback('on_batch_end', evaluation_proxy, evaluation_interval=config.system.evaluation_interval)
 
 
 def register_evaluator_callbacks(config, evaluator, **kwargs):
@@ -139,10 +139,14 @@ def register_evaluator_callbacks(config, evaluator, **kwargs):
         evaluator.add_callback('on_evaluation_end', cache_best_model)
 
     # stdout logger
-    evaluator.add_callback('on_dataloader_end',
-        lambda evaluator: evaluator.accelerator.print(f'evaluation of {evaluator.dataloader.dataset.name} completed in {evaluator.dataloader_duration:.2f}s'))
-    evaluator.add_callback('on_evaluation_end',
-        lambda evaluator: evaluator.accelerator.print(f'evaluation completed in {evaluator.evaluation_duration:.2f}'))
+    evaluator.add_callback(
+        'on_dataloader_end',
+        lambda evaluator: evaluator.accelerator.print(f'evaluation of {evaluator.dataloader.dataset.name} completed in {evaluator.dataloader_duration:.2f}s')
+    )
+    evaluator.add_callback(
+        'on_evaluation_end',
+        lambda evaluator: evaluator.accelerator.print(f'evaluation completed in {evaluator.evaluation_duration:.2f}')
+    )
 
 
 def main(config_file):
@@ -160,10 +164,10 @@ def main(config_file):
     model = Detector(config.model, config.data.train.num_frames, accelerator)
 
     # initialize datasets
-    train_dataset = FFPP(config.data.train, model.transform, accelerator, 'train')
+    train_dataset = RPPG(config.data.train, model.transform, accelerator, 'train')
     accelerator.print(f'Dataset {train_dataset.name} initialized with {len(train_dataset)} samples\n')
 
-    eval_datasets = [FFPP(cfg, model.transform, accelerator, 'val') for cfg in config.data.eval]
+    eval_datasets = [RPPG(cfg, model.transform, accelerator, 'val') for cfg in config.data.eval]
     for dataset in eval_datasets:
         accelerator.print(f'Dataset {dataset.name} initialized with {len(dataset)} samples\n')
 
@@ -234,5 +238,17 @@ if __name__ == "__main__":
         default=None,
         help="Optional YAML configuration file"
     )
-    
-    main(parser.parse_args().cfg)
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Debugging mode"
+    )
+
+    params = parser.parse_args()
+
+    if(not params.debug):
+        import warnings
+        warnings.filterwarnings(action="ignore")
+        # warnings.simplefilter(action='ignore', category=RuntimeWarning)
+
+    main(params.cfg)

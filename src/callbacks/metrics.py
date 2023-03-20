@@ -3,8 +3,8 @@ import  evaluate
 
 @torch.no_grad()
 def init_metrics(agent):
-    agent.accuracy_calc = evaluate.load("accuracy")
-    agent.roc_auc_calc = evaluate.load("roc_auc")
+    agent.mse_calc = evaluate.load("mse","multilist")
+    # agent.roc_auc_calc = evaluate.load("roc_auc")
     agent.losses = []
 
 
@@ -29,8 +29,10 @@ def update_metrics(agent):
         #         waiting for the next accelerate release
         return
 
-    agent.accuracy_calc.add_batch(references=labels, predictions=pred_labels)
-    agent.roc_auc_calc.add_batch(references=labels, prediction_scores=pred_probs[:, 1]) # prob of real class
+    agent.mse_calc.add_batch(
+        references=labels.to(torch.float32),
+        predictions=pred_probs.to(torch.float32)
+    )
     agent.losses.append(losses.mean().item())
 
 
@@ -39,11 +41,10 @@ def compute_metrics(agent):
     if agent.steps % agent.training_eval_interval:
         return
 
-    agent.accuracy = agent.accuracy_calc.compute()['accuracy']
-    agent.roc_auc = agent.roc_auc_calc.compute()['roc_auc']
+    agent.mse = agent.mse_calc.compute()['mse']
     agent.loss_avg = sum(agent.losses) / len(agent.losses)
 
-    agent.accelerator.print({'accuracy': agent.accuracy, 'roc_auc': agent.roc_auc, 'loss': agent.loss_avg})
+    agent.accelerator.print({'mse': agent.mse,'loss_avg':agent.loss_avg})
 
     agent.losses = []
 

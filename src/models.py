@@ -6,12 +6,14 @@ from torch import nn
 from . import clip
 import torchvision.transforms as T
 
+
 class LayerNorm(nn.LayerNorm):
     """
     Subclass torch's LayerNorm to handle fp16.
     Ported from:
     https://github.com/openai/CLIP/blob/d50d76daa670286dd6cacf3bcd80b5e4823fc8e1/clip/model.py#L157
     """
+
     def forward(self, x: torch.Tensor):
         orig_type = x.dtype
         ret = super().forward(x.type(torch.float32))
@@ -23,6 +25,7 @@ class QuickGELU(nn.Module):
     Ported from:
     https://github.com/openai/CLIP/blob/d50d76daa670286dd6cacf3bcd80b5e4823fc8e1/clip/model.py#L166
     """
+
     def forward(self, x: torch.Tensor):
         return x * torch.sigmoid(1.702 * x)
 
@@ -40,6 +43,7 @@ class MultiheadAttention(nn.Module):
     in addition to the original softmax in the original transformer
     we also apply compositional de-attention to the affinity matrix
     """
+
     def __init__(self, embed_dim, n_head):
         def smax(q, k, m):
             """
@@ -56,13 +60,13 @@ class MultiheadAttention(nn.Module):
             """
             norm = q.size(-1) ** 0.5
             aff = torch.einsum('nqhc,nkhc->nqkh', q / norm, k).tanh()
-            gate = -(q-k).abs().sum(-1).unsqueeze(1) / norm
+            gate = -(q - k).abs().sum(-1).unsqueeze(1) / norm
             gate = 2 * gate.sigmoid().masked_fill(~m, 0.)
             return aff * gate
 
         super().__init__()
         self.activations = [smax, coda]
-        self.n_act = len(self.activations) # softmax and coda
+        self.n_act = len(self.activations)  # softmax and coda
         self.in_proj = nn.Linear(embed_dim, self.n_act * embed_dim)
         self.out_proj = nn.Linear(embed_dim, embed_dim)
 
@@ -81,11 +85,13 @@ class MultiheadAttention(nn.Module):
 
         return self.out_proj(mix.flatten(-2))
 
+
 class ResidualAttentionBlock(nn.Module):
     """
     Modified from:
     https://github.com/openai/CLIP/blob/d50d76daa670286dd6cacf3bcd80b5e4823fc8e1/clip/model.py#L171
     """
+
     def __init__(self, d_model: int, n_head: int, config, reference_layer: nn.Module):
         super().__init__()
 
@@ -123,6 +129,7 @@ class Transformer(nn.Module):
     Modified from:
     https://github.com/openai/CLIP/blob/d50d76daa670286dd6cacf3bcd80b5e4823fc8e1/clip/model.py#L195
     """
+
     def __init__(self, width: int, heads: int, config, reference_layers: nn.Sequential):
         super().__init__()
         self.width = width
@@ -146,6 +153,7 @@ class Decoder(nn.Module):
 
     The positional embeddings are shared across patches in the same spatial location
     """
+
     def __init__(self, encoder, config, num_frames):
         super().__init__()
         width = encoder.width
@@ -159,6 +167,7 @@ class Decoder(nn.Module):
         self.transformer = Transformer(width, heads, config, encoder.transformer.resblocks)
         self.ln_post = LayerNorm(width)
         self.proj = nn.Parameter(scale * torch.randn(width, output_dim))
+
 
     def forward(self, kvs, m):
         m = m.repeat_interleave(kvs[0]['k'].size(2), dim=-1)
@@ -198,7 +207,7 @@ class Detector(nn.Module):
         C.dropout = 0.0
         C.out_dim = 2
         return C
-    
+
     def __init__(self, config, num_frames, accelerator):
         super().__init__()
         with accelerator.main_process_first():
@@ -220,9 +229,9 @@ class Detector(nn.Module):
 
         return self.decoder(kvs, m)
 
-    def forward(self, x, y, m):
+    def forward(self, x, y, m,*args):
         logits = self.predict(x, m)
-        loss = torch.nn.functional.cross_entropy(logits, y, reduction='none')
+        loss = torch.nn.functional.kl_div(torch.nn.functional.log_softmax(logits,dim=1), y, reduction='none')
         return loss, logits
 
     def configure_optimizers(self, lr):
@@ -237,8 +246,6 @@ class Detector(nn.Module):
             T.Resize(n_px, interpolation=T.InterpolationMode.BICUBIC),
             T.CenterCrop(n_px),
             T.ConvertImageDtype(torch.float32),
-            T.Normalize((0.48145466, 0.4578275,  0.40821073),
+            T.Normalize((0.48145466, 0.4578275, 0.40821073),
                         (0.26862954, 0.26130258, 0.27577711)),
         ])
-
-
