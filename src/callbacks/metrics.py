@@ -1,5 +1,6 @@
 import torch
 import  evaluate
+import wandb
 
 @torch.no_grad()
 def init_metrics(agent):
@@ -45,6 +46,8 @@ def compute_metrics(agent):
     agent.loss_avg = sum(agent.losses) / len(agent.losses)
 
     agent.accelerator.print({'mse': agent.mse,'loss_avg':agent.loss_avg})
+
+    wandb.log(data={f'{type(agent).__name__}_mse'.lower(): agent.mse,f'{type(agent).__name__}_loss_avg'.lower():agent.loss_avg},step=agent.steps)
 
     agent.losses = []
 

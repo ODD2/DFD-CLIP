@@ -2,10 +2,12 @@ import os
 import random
 import re
 import argparse
+import logging
 from datetime import timedelta
 
 import numpy as np
 import torch
+import wandb
 from accelerate import Accelerator
 from yacs.config import CfgNode as CN
 
@@ -148,10 +150,10 @@ def register_evaluator_callbacks(config, evaluator, **kwargs):
         lambda evaluator: evaluator.accelerator.print(f'evaluation completed in {evaluator.evaluation_duration:.2f}')
     )
 
-
 def main(config_file):
+    
     config = get_config(config_file)
-
+    
     # initialize accelerator and trackers (if enabled)
     accelerator = init_accelerator(config)
     accelerator.print(config.dump())
@@ -160,6 +162,8 @@ def main(config_file):
     if config.system.deterministic_training:
         set_seed(config.system.seed)
 
+    # initialize wandb
+    wandb.init(project=config.tracking.project_name)
     # initialize model
     model = Detector(config.model, config.data.train.num_frames, accelerator)
 
@@ -248,7 +252,12 @@ if __name__ == "__main__":
 
     if(not params.debug):
         import warnings
+        logging.basicConfig(level="INFO")
         warnings.filterwarnings(action="ignore")
         # warnings.simplefilter(action='ignore', category=RuntimeWarning)
+    else:
+        
+        logging.basicConfig(level="DEBUG")
+        
 
     main(params.cfg)

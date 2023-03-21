@@ -13,13 +13,13 @@ data:
     - name: validation
 
 trainer:
-  batch_size: 8
-  learning_rate: 0.001
-  max_steps: 1000
+  batch_size: 10
+  learning_rate: 0.0003
+  max_steps: 10000
   num_workers: 8
 
 evaluator:
-  batch_size: 4
+  batch_size: 8
   num_workers: 8
 
 system:
