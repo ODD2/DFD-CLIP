@@ -53,13 +53,13 @@ class Trainer:
     def run(self):
         self.trigger_callbacks('on_training_start')
 
-        self.model.train()
         self.steps = 0
 
         while True:
             self.trigger_callbacks('on_epoch_start')
             for batch in self.dataloader:
                 self.trigger_callbacks('on_batch_start')
+                self.model.train()
 
                 # forward and calculate the loss
                 loss, logits = self.model(*batch)

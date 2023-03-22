@@ -65,10 +65,3 @@ class Evaluator:
 
         self.trigger_callbacks('on_evaluation_end')
 
-        # XXX: if we don't set the gradient_state ourselves
-        #      the state remains at the end of evaluation
-        #      which incorrectly drops samples when `gather_for_metrics`
-        #      in the following training
-        #      see https://github.com/huggingface/accelerate/issues/960
-        self.accelerator.gradient_state.end_of_dataloader = False
-

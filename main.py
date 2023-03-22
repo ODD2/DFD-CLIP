@@ -96,9 +96,6 @@ def register_trainer_callbacks(config, trainer, **kwargs):
         trainer.add_callback('on_batch_end', update_trackers)
         trainer.add_callback('on_training_end', save_model)
 
-    # evaluator
-    trainer.add_callback('on_batch_end', evaluation_proxy, evaluation_interval=config.system.evaluation_interval)
-
     # stdout logger
     trainer.add_callback('on_batch_end',
         lambda trainer: trainer.accelerator.print(f'{trainer.steps} | loss {trainer.loss.mean().item()}, {trainer.batch_duration:.2f}s'))
@@ -106,6 +103,9 @@ def register_trainer_callbacks(config, trainer, **kwargs):
         lambda trainer: trainer.accelerator.print(f'epoch takes {trainer.epoch_duration:.2f}s'))
     trainer.add_callback('on_training_end',
         lambda trainer: trainer.accelerator.print(f'training completed in {timedelta(seconds=trainer.training_duration)}'))
+
+    # evaluator
+    trainer.add_callback('on_batch_end', evaluation_proxy, evaluation_interval=config.system.evaluation_interval)
 
 
 def register_evaluator_callbacks(config, evaluator, **kwargs):
