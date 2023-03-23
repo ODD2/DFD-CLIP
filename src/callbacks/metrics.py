@@ -20,16 +20,6 @@ def update_metrics(agent):
     if not agent.accelerator.is_local_main_process:
         return
 
-    if losses.numel() == 0:
-        # XXX: this seems to be a bug of accelerate, the entire last batch is
-        #      consided duplicate by gather_for_metrics. This happens only when
-        #      dataset gets perfectly sharded.
-        #      see https://github.com/huggingface/accelerate/issues/952
-        #
-        # Update: fixed in https://github.com/huggingface/accelerate/pull/982
-        #         waiting for the next accelerate release
-        return
-
     agent.mse_calc.add_batch(
         references=labels.to(torch.float32),
         predictions=pred_probs.to(torch.float32)
