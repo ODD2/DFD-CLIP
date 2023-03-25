@@ -27,14 +27,14 @@ class FFPP(Dataset):
     def get_default_config():
         C = CN()
         C.name = 'train'
-        C.root_dir = '/home/ernestchu/scratch4/Datasets/FFPP'
+        C.root_dir = './datasets/ffpp/'
         C.types = ['REAL', 'DF']
         C.compressions = ['raw']
         C.detection_level = 'video'
-        C.num_frames = 30
+        C.dataset = "FFPP"
         return C
 
-    def __init__(self, config, transform, accelerator, split='train'):
+    def __init__(self, config,num_frames,clip_duration, transform, accelerator, split='train'):
         self.TYPE_DIRS = {
             'REAL': 'data/original_sequences/youtube/',
             # 'DFD' : 'data/original_sequences/actors/',
@@ -50,10 +50,14 @@ class FFPP(Dataset):
         self.detection_level = config.detection_level
         self.types = config.types
         self.compressions = config.compressions
-        self.num_frames = config.num_frames
+        self.num_frames = num_frames
+        self.clip_duration = clip_duration
         self.split = split
         self.transform = transform
-        with accelerator.main_process_first():
+        if accelerator:
+            with accelerator.main_process_first():
+                self._build_video_table(accelerator)
+        else:
             self._build_video_table(accelerator)
         self._build_data_list(accelerator)
 
@@ -339,20 +343,19 @@ class RPPG(Dataset):
         C.name = 'train'
         C.root_dir = './datasets/hci/'
         C.detection_level = 'video'
-        C.num_frames = 50
-        C.clip_duration = 10
         C.train_ratio = 0.95
         C.cropped_folder="cropped_faces"
         C.meta_folder="Metas"
+        C.dataset="RPPG"
         return C
 
-    def __init__(self, config, transform=None, accelerator=None, split='train'):
+    def __init__(self, config,num_frames,clip_duration, transform=None, accelerator=None, split='train'):
         # TODO: accelerator not implemented
         self.name = config.name
         # HCI datasets recorded videos with 61 fps
         self.transform = transform
-        self.num_frames = config.num_frames
-        self.clip_duration = config.clip_duration
+        self.num_frames = num_frames
+        self.clip_duration = clip_duration
 
         # dataset consistency
         rng = random.Random()

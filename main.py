@@ -1,4 +1,5 @@
 import os
+import sys
 import random
 import re
 import argparse
@@ -12,7 +13,7 @@ from accelerate import Accelerator
 from yacs.config import CfgNode as CN
 
 from src.models import Detector
-from src.datasets import RPPG
+from src.datasets import RPPG,FFPP
 from src.trainer import Trainer
 from src.evaluator import Evaluator
 from src.callbacks.timer import start_timer, end_timer
@@ -40,11 +41,6 @@ def get_config(config_file):
     C.tracking.main_metric = 'mse' # accuracy | roc_auc
     C.tracking.compare_fn = 'max' # max | min
 
-    # data
-    C.data = CN()
-    C.data.train = RPPG.get_default_config()
-    C.data.eval = []
-
     # model
     C.model = Detector.get_default_config()
 
@@ -54,12 +50,37 @@ def get_config(config_file):
     # evaluator
     C.evaluator = Evaluator.get_default_config()
 
+    # data
+    C.data = CN()
+    C.data.num_frames = 50
+    C.data.clip_duration = 10
+    C.data.train = []
+    C.data.eval = []
+
     # load additional configs from file
     if config_file is not None:
         C.merge_from_file(config_file)
-
-    # post-process eval datasets
-    C.data.eval = [RPPG.get_default_config().merge_from_other_cfg(d_eval) for d_eval in C.data.eval]
+        
+        # train dataset
+        C.data.train = [
+            (
+                getattr(sys.modules["__main__"],d_train.dataset)
+                .get_default_config()
+                .merge_from_other_cfg(d_train)
+            )
+            for d_train in C.data.train
+        ]
+        # eval datasets
+        C.data.eval = [
+            (
+                getattr(sys.modules["__main__"],d_eval.dataset)
+                .get_default_config()
+                .merge_from_other_cfg(d_eval)
+            )
+            for d_eval in C.data.eval
+        ]
+       
+        
 
     C.freeze()
 
@@ -165,13 +186,28 @@ def main(config_file):
     # initialize wandb
     wandb.init(project=config.tracking.project_name)
     # initialize model
-    model = Detector(config.model, config.data.train.num_frames, accelerator)
+    model = Detector(config.model, config.data.num_frames, accelerator)
 
     # initialize datasets
-    train_dataset = RPPG(config.data.train, model.transform, accelerator, 'train')
+    train_dataset = RPPG(
+        config.data.train[0],
+        config.data.num_frames,
+        config.data.clip_duration,
+        transform=model.transform,
+        accelerator=accelerator,
+        split='train'
+    )
     accelerator.print(f'Dataset {train_dataset.name} initialized with {len(train_dataset)} samples\n')
 
-    eval_datasets = [RPPG(cfg, model.transform, accelerator, 'val') for cfg in config.data.eval]
+    eval_datasets = [
+        RPPG(
+            cfg, model.transform,
+            config.data.num_frames,
+            config.data.clip_duration,
+            accelerator=accelerator,
+            split='val'
+        ) for cfg in config.data.eval
+    ]
     for dataset in eval_datasets:
         accelerator.print(f'Dataset {dataset.name} initialized with {len(dataset)} samples\n')
 

@@ -1,6 +1,6 @@
 tracking:
-  enabled: true
-  project_name: RPPG
+  enabled: false
+  project_name: mix
   directory: logs/rppg-test
 
 model:
@@ -8,11 +8,15 @@ model:
 
 data:
   train:
-    - name: train
+    - name: rPPG
       dataset: RPPG
+    - name: deepfake
+      dataset: FFPP
   eval:
-    - name: validation
+    - name: rPPG
       dataset: RPPG
+    - name: deepfake
+      dataset: FFPP
 
 trainer:
   batch_size: 10

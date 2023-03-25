@@ -11,7 +11,8 @@
             "module": "main",
             "args": [
                 "--cfg",
-                "configs/rppg.yml"
+                "configs/rppg.yml",
+                // "--debug"
             ],
             "justMyCode": false
         },
@@ -20,8 +21,7 @@
             "type": "python",
             "request": "launch",
             "module": "test",
-            "args": [
-            ],
+            "args": [],
             "justMyCode": false
         }
     ]
