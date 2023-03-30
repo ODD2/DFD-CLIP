@@ -94,9 +94,9 @@ def compute_metrics(agent):
     agent.compute_metrics = {}
     for lname in agent.losses.keys():
         for mname,metric  in agent.calcs[lname].items():
-            agent.compute_metrics[f"metric-{lname}-{mname}"] = metric.compute()[mname]
+            agent.compute_metrics[f"metric/{lname}-{mname}"] = metric.compute()[mname]
         
-        agent.compute_losses[f"loss-{lname}"] = sum(agent.losses[lname]) / len(agent.losses[lname])
+        agent.compute_losses[f"loss/{lname}"] = sum(agent.losses[lname]) / len(agent.losses[lname])
         agent.losses[lname].clear()
 
     agent.accelerator.print(
@@ -109,11 +109,11 @@ def compute_metrics(agent):
     wandb.log(
         data={
             **{
-                f'{type(agent).__name__}-{lname}'.lower():value
+                f'{type(agent).__name__}/{lname}'.lower():value
                 for lname,value in agent.compute_losses.items()
             },
             **{
-                f'{type(agent).__name__}-{mname}'.lower(): value
+                f'{type(agent).__name__}/{mname}'.lower(): value
                 for mname, value in agent.compute_metrics.items()
             },
         },

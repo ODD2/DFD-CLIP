@@ -1,6 +1,6 @@
 tracking:
   enabled: false
-  project_name: deepfake
+  project_name: mix
   directory: logs/multi_evidence
 
 model:
