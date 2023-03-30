@@ -1,26 +1,19 @@
 tracking:
   enabled: false
-  project_name: mix
-  directory: logs/rppg-test
+  project_name: deepfake
+  directory: logs/multi_evidence
 
 model:
   out_dim: 
-    - 180
     - 2
   losses:
-    - kl_div
     - auc_roc
 
 data:
   train:
-    - name: rPPG
-      dataset: RPPG
     - name: Deepfake
       dataset: FFPP
   eval:
-    - name: rPPG
-      dataset: RPPG
-      train_ratio: 0.8
     - name: Deepfake
       dataset: FFPP
 
@@ -30,9 +23,6 @@ trainer:
   max_steps: 10000
   num_workers: 8
   metrics:
-    - name: rPPG
-      types:
-        - mse
     - name: Deepfake
       types:
         - accuracy
@@ -43,9 +33,6 @@ evaluator:
   batch_size: 8
   num_workers: 8
   metrics:
-    - name: rPPG
-      types:
-        - mse
     - name: Deepfake
       types:
         - accuracy

@@ -11,6 +11,7 @@ class Evaluator:
         C = CN()
         C.num_workers = 4
         C.batch_size = 16
+        C.metrics = []
         return C
 
     def __init__(self, config, accelerator, datasets: List[Dataset]):
@@ -18,17 +19,17 @@ class Evaluator:
         self.accelerator = accelerator
         self.callbacks = defaultdict(list)
 
-        self.dataloaders = [
-            DataLoader(dataset,
-                       batch_size=config.batch_size,
-                       num_workers=config.num_workers)
-        for dataset in datasets]
+        self.dataloaders = {}
 
-        # let the accelerator prepare the dataloader
-        # for ddp and amp if len(datalaoder) > 0
-        self.dataloaders = self.dataloaders and self.accelerator.prepare(*self.dataloaders)
-        # in the case where there is only one evaluation dataset
-        self.dataloaders = self.dataloaders if isinstance(self.dataloaders, (tuple, list)) else [self.dataloaders]
+        for dataset in datasets:
+            self.dataloaders[dataset.name] = self.accelerator.prepare(
+                DataLoader(
+                    dataset,
+                    batch_size=config.batch_size,
+                    num_workers=config.num_workers
+                )
+            )
+        
 
     def add_callback(self, onevent: str, callback, **kwargs):
         self.callbacks[onevent].append(callback)
@@ -46,22 +47,30 @@ class Evaluator:
         self.steps = trainer.steps
         self.model = trainer.model.eval()
 
-        for self.dataloader in self.dataloaders:
-            self.trigger_callbacks('on_dataloader_start')
-
-            for batch in self.dataloader:
-                self.trigger_callbacks('on_batch_start')
+        dataset_iterators = {
+            name:
+            iter(dataloader) for name, dataloader in self.dataloaders.items()
+        }
+        while len(dataset_iterators) > 0:
+            self.trigger_callbacks('on_batch_start')
+            self.batch_losses = {}
+            self.batch_logits = {}
+            self.batch_labels = {}
+            for name in list(dataset_iterators.keys()):
+                try:
+                    batch = next(dataset_iterators[name])
+                except StopIteration:
+                    dataset_iterators.pop(name)
+                    continue
 
                 loss, logits = self.model(*batch)
 
                 # cache several stats
-                self.loss = loss
-                self.logits = logits
-                self.labels = batch[1]
+                self.batch_losses[name] = loss.detach()
+                self.batch_logits[name] = logits.detach()
+                self.batch_labels[name] = batch[1].detach()
 
-                self.trigger_callbacks('on_batch_end')
-
-            self.trigger_callbacks('on_dataloader_end')
-
+            self.batch_loss_info = ",".join([f"{losses.mean().item()}({name}_loss) " for name,losses in self.batch_losses.items()])
+            self.trigger_callbacks('on_batch_end')
         self.trigger_callbacks('on_evaluation_end')
 

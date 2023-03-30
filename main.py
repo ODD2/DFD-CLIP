@@ -38,7 +38,7 @@ def get_config(config_file):
     C.tracking.project_name = None
     C.tracking.default_project_prefix = 'version'
     C.tracking.tool = 'all'
-    C.tracking.main_metric = 'mse' # accuracy | roc_auc
+    C.tracking.main_metric = 'roc_auc' # accuracy | roc_auc
     C.tracking.compare_fn = 'max' # max | min
 
     # model
@@ -64,7 +64,7 @@ def get_config(config_file):
         # train dataset
         C.data.train = [
             (
-                getattr(sys.modules["__main__"],d_train.dataset)
+                globals()[d_train.dataset]
                 .get_default_config()
                 .merge_from_other_cfg(d_train)
             )
@@ -73,7 +73,7 @@ def get_config(config_file):
         # eval datasets
         C.data.eval = [
             (
-                getattr(sys.modules["__main__"],d_eval.dataset)
+                globals()[d_eval.dataset]
                 .get_default_config()
                 .merge_from_other_cfg(d_eval)
             )
@@ -121,7 +121,7 @@ def register_trainer_callbacks(config, trainer, **kwargs):
 
     # stdout logger
     trainer.add_callback('on_batch_end',
-        lambda trainer: trainer.accelerator.print(f'{trainer.steps} | loss {trainer.loss.mean().item()}, {trainer.batch_duration:.2f}s'))
+        lambda trainer: trainer.accelerator.print(f'{trainer.steps} | loss {trainer.batch_loss_info}, {trainer.batch_duration:.2f}s'))
     trainer.add_callback('on_epoch_end',
         lambda trainer: trainer.accelerator.print(f'epoch takes {trainer.epoch_duration:.2f}s'))
     trainer.add_callback('on_training_end',
@@ -147,18 +147,17 @@ def register_evaluator_callbacks(config, evaluator, **kwargs):
     evaluator.add_callback('on_batch_end', update_metrics)
     if evaluator.accelerator.is_local_main_process:
         evaluator.add_callback('on_evaluation_start', init_metrics)
-        evaluator.add_callback('on_dataloader_end', compute_metrics, training_eval_interval=1)
+        evaluator.add_callback('on_evaluation_end', compute_metrics, training_eval_interval=1)
 
     # tracker
     if config.tracking.enabled and evaluator.accelerator.is_local_main_process:
-        evaluator.add_callback('on_dataloader_end', update_trackers)
+        evaluator.add_callback('on_evaluation_end', update_trackers)
 
         # model saver
         evaluator.add_callback('on_evaluation_start', clear_current_main_metrics,
                                                       main_metric=config.tracking.main_metric,
                                                       compare_fn=config.tracking.compare_fn,
                                                       current_main_metrics=[])
-        evaluator.add_callback('on_dataloader_end', add_main_metric)
         evaluator.add_callback('on_evaluation_end', cache_best_model)
 
     # stdout logger
@@ -170,6 +169,7 @@ def register_evaluator_callbacks(config, evaluator, **kwargs):
         'on_evaluation_end',
         lambda evaluator: evaluator.accelerator.print(f'evaluation completed in {evaluator.evaluation_duration:.2f}')
     )
+
 
 def main(config_file):
     
@@ -189,30 +189,36 @@ def main(config_file):
     model = Detector(config.model, config.data.num_frames, accelerator)
 
     # initialize datasets
-    train_dataset = RPPG(
-        config.data.train[0],
+    train_datasets = [
+        globals()[cfg.dataset](
+        cfg,
         config.data.num_frames,
         config.data.clip_duration,
         transform=model.transform,
         accelerator=accelerator,
-        split='train'
-    )
-    accelerator.print(f'Dataset {train_dataset.name} initialized with {len(train_dataset)} samples\n')
+        split='train',
+        index=i
+    ) for i,cfg in enumerate(config.data.train)
+    ]
+    for dataset in train_datasets:
+        accelerator.print(f'Training Dataset {dataset.name} initialized with {len(dataset)} samples\n')
 
     eval_datasets = [
-        RPPG(
-            cfg, model.transform,
+        globals()[cfg.dataset](
+            cfg, 
             config.data.num_frames,
             config.data.clip_duration,
+            model.transform,
             accelerator=accelerator,
-            split='val'
-        ) for cfg in config.data.eval
+            split='val',
+            index=i
+        )  for i,cfg in enumerate(config.data.eval)
     ]
     for dataset in eval_datasets:
-        accelerator.print(f'Dataset {dataset.name} initialized with {len(dataset)} samples\n')
+        accelerator.print(f'Evaluation Dataset {dataset.name} initialized with {len(dataset)} samples\n')
 
     # initialize trainer and evaluator
-    trainer = Trainer(config.trainer, accelerator, model, train_dataset)
+    trainer = Trainer(config.trainer, accelerator, model, train_datasets)
     evaluator = Evaluator(config.evaluator, accelerator, eval_datasets)
 
     # register callbacks

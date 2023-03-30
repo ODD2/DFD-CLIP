@@ -11,7 +11,7 @@
             "module": "main",
             "args": [
                 "--cfg",
-                "configs/rppg.yml",
+                "configs/mix.yml",
                 // "--debug"
             ],
             "justMyCode": false

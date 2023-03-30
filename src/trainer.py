@@ -18,27 +18,38 @@ class Trainer:
         C.num_workers = 4
         C.batch_size = 16
         C.learning_rate = 1e-3
+        C.metrics = []
         return C
 
-    def __init__(self, config, accelerator, model, dataset):
+    def __init__(self, config, accelerator, model, datasets):
         self.config = config
         self.accelerator = accelerator
         self.callbacks = defaultdict(list)
 
         self.model = model
         self.optimizer = model.configure_optimizers(config.learning_rate / 25)
-        self.lr_scheduler = OneCycleLR(optimizer=self.optimizer,
-                                       max_lr=config.learning_rate,
-                                       total_steps=(config.max_steps *
-                                                    self.accelerator.state.num_processes))
-        self.dataloader = DataLoader(dataset,
-                                     shuffle=True,
-                                     batch_size=config.batch_size,
-                                     num_workers=config.num_workers)
 
+        self.lr_scheduler = OneCycleLR(
+            optimizer=self.optimizer,
+            max_lr=config.learning_rate,
+            total_steps=(config.max_steps *self.accelerator.state.num_processes)
+        )
+
+        self.dataloaders = {}
+      
         # let the accelerator prepare the objects for ddp and amp
-        self.model, self.optimizer, self.dataloader, self.lr_scheduler = self.accelerator.prepare(
-        self.model, self.optimizer, self.dataloader, self.lr_scheduler)
+        self.model, self.optimizer, self.lr_scheduler = self.accelerator.prepare(self.model, self.optimizer, self.lr_scheduler)
+        
+        for dataset in datasets:
+            self.dataloaders[dataset.name] = self.accelerator.prepare(
+                DataLoader(
+                    dataset,
+                    shuffle=True,
+                    batch_size=config.batch_size,
+                    num_workers=config.num_workers
+                )
+            )
+
 
     def add_callback(self, onevent: str, callback, **kwargs):
         self.callbacks[onevent].append(callback)
@@ -54,12 +65,27 @@ class Trainer:
         self.trigger_callbacks('on_training_start')
 
         self.steps = 0
-
+        dataset_iterators = {
+            name:
+            iter(dataloader) for name, dataloader in self.dataloaders.items()
+        }
         while True:
-            self.trigger_callbacks('on_epoch_start')
-            for batch in self.dataloader:
-                self.trigger_callbacks('on_batch_start')
+            # self.trigger_callbacks('on_epoch_start')
+            self.trigger_callbacks('on_batch_start')
+            ############################
+            self.model.zero_grad()
+            self.batch_losses = {}
+            self.batch_logits = {}
+            self.batch_labels = {}
+            for name in dataset_iterators.keys():
+                try:
+                    batch = next(dataset_iterators[name])
+                except StopIteration:
+                    dataset_iterators[name] = iter(self.dataloaders[name])
+                    batch = next(dataset_iterators[name])
+
                 self.model.train()
+            
 
                 # forward and calculate the loss
                 loss, logits = self.model(*batch)
@@ -67,22 +93,24 @@ class Trainer:
                 # backprop and update the parameters
                 # the loss from the model is should not to be reduced
                 # so the duplicate samples can be detected
-                self.model.zero_grad()
                 self.accelerator.backward(loss.mean())
-                self.optimizer.step()
-                self.lr_scheduler.step()
- 
+                
                 # cache output artifacts
-                self.loss = loss.detach()
-                self.logits = logits.detach()
-                self.labels = batch[1]
+                self.batch_losses[name] = loss.detach()
+                self.batch_logits[name] = logits.detach()
+                self.batch_labels[name] = batch[1].detach()
+            
+            self.optimizer.step()
+            self.lr_scheduler.step()
 
-                self.steps += 1
-                self.trigger_callbacks('on_batch_end')
 
-                if self.steps >= self.config.max_steps:
-                    self.trigger_callbacks('on_training_end')
-                    return
+            self.steps += 1
+            self.batch_loss_info = ",".join([f"{losses.mean().item()}({name}_loss) " for name,losses in self.batch_losses.items()])
+            self.trigger_callbacks('on_batch_end')
 
-            self.trigger_callbacks('on_epoch_end')
+            if self.steps >= self.config.max_steps:
+                self.trigger_callbacks('on_training_end')
+                return
+
+            # self.trigger_callbacks('on_epoch_end')
 

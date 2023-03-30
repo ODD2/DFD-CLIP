@@ -9,22 +9,22 @@ def update_trackers(agent):
         return
 
     agent.accelerator.log(
-        {
-            f'loss/{agent.dataloader.dataset.name}': agent.loss_avg,
-        },
+        *agent.compute_losses,
         step=agent.steps,
     )
 
-    if not isinstance(agent, Trainer):
-        return
+    # Comment out the following lines due to the new training structure utilize more than one dataset.
 
-    agent.accelerator.log(
-        {
-            # f'epoch/{agent.dataloader.dataset.name}': agent.steps * agent.dataloader.total_batch_size / agent.dataloader.total_dataset_length,
-            f'lr/{agent.dataloader.dataset.name}': agent.optimizer.param_groups[0]['lr'],
-        },
-        step=agent.steps,
-    )
+    # if not isinstance(agent, Trainer):
+    #     return
+
+    # agent.accelerator.log(
+    #     {
+    #         # f'epoch/{agent.dataloader.dataset.name}': agent.steps * agent.dataloader.total_batch_size / agent.dataloader.total_dataset_length,
+    #         f'lr/{agent.dataloader.dataset.name}': agent.optimizer.param_groups[0]['lr'],
+    #     },
+    #     step=agent.steps,
+    # )
 
 
 # model saver
@@ -34,10 +34,11 @@ def add_main_metric(agent):
 
 @torch.no_grad()
 def cache_best_model(agent):
-    main_metric = sum(agent.current_main_metrics) / len(agent.current_main_metrics)
+    target_metrics = [value for name,value in agent.compute_losses.items() if  agent.main_metric in name]
+    main_metric =  sum(target_metrics) / len(target_metrics)
     current_best = getattr(agent, 'best_main_metric', main_metric)
 
-    if getattr(builtins, agent.compare_fn)(main_metric, current_best) == main_metric:
+    if getattr(builtins, agent.compare_fn)(main_metric, current_best) <= main_metric:
         # update best
         agent.accelerator.print(f'best model updated with {agent.main_metric} of', main_metric,
                                 f'(past SOTA: {current_best})')

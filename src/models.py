@@ -6,6 +6,12 @@ from torch import nn
 from . import clip
 import torchvision.transforms as T
 
+def kl_div(logits,y):
+    return torch.nn.functional.kl_div(torch.nn.functional.log_softmax(logits,dim=1), y, reduction='none')
+
+def auc_roc(logits,y):
+    return torch.nn.functional.cross_entropy(logits, y, reduction='none')
+
 
 class LayerNorm(nn.LayerNorm):
     """
@@ -158,7 +164,7 @@ class Decoder(nn.Module):
         super().__init__()
         width = encoder.width
         heads = encoder.heads
-        output_dim = config.out_dim
+        output_dims = config.out_dim
         scale = width ** -0.5
 
         self.class_embedding = nn.Parameter(scale * torch.randn(width))
@@ -166,10 +172,14 @@ class Decoder(nn.Module):
         self.ln_pre = LayerNorm(width)
         self.transformer = Transformer(width, heads, config, encoder.transformer.resblocks)
         self.ln_post = LayerNorm(width)
-        self.proj = nn.Parameter(scale * torch.randn(width, output_dim))
+        self.projections  = []
+        for i,output_dim in enumerate(output_dims):
+            _name = f"proj{i}x{output_dim}"
+            setattr(self,_name, nn.Parameter(scale * torch.randn(width, output_dim)))
+            self.projections.append(getattr(self,_name))
 
 
-    def forward(self, kvs, m):
+    def forward(self, kvs, m, output_index=0):
         m = m.repeat_interleave(kvs[0]['k'].size(2), dim=-1)
         kvs = [{k: (v + self.positional_embedding).flatten(1, 2) for k, v in kv.items()} for kv in kvs]
 
@@ -177,7 +187,7 @@ class Decoder(nn.Module):
         x = self.ln_pre(x)
         x = self.transformer(x, kvs, m)
         x = self.ln_post(x)
-        x = x.squeeze(1) @ self.proj
+        x = x.squeeze(1) @ self.projections[output_index]
         return x
 
 
@@ -205,7 +215,8 @@ class Detector(nn.Module):
         C.architecture = 'ViT-B/16'
         C.decode_stride = 2
         C.dropout = 0.0
-        C.out_dim = 2
+        C.out_dim = []
+        C.losses = []
         return C
 
     def __init__(self, config, num_frames, accelerator):
@@ -216,8 +227,13 @@ class Detector(nn.Module):
 
         self.transform = self._transform(self.encoder.input_resolution)
         self.decode_stride = config.decode_stride
+        self.losses = []
+        
+        for loss in config.losses:
+            self.losses.append(globals()[loss])
 
-    def predict(self, x, m):
+
+    def predict(self, x, m, i):
         b, t, c, h, w = x.shape
         with torch.no_grad():
             # get key and value from each CLIP ViT layer
@@ -227,11 +243,15 @@ class Detector(nn.Module):
             # strided export
             kvs = kvs[::self.decode_stride]
 
-        return self.decoder(kvs, m)
+        return self.decoder(kvs, m, i)
 
-    def forward(self, x, y, m,*args):
-        logits = self.predict(x, m)
-        loss = torch.nn.functional.kl_div(torch.nn.functional.log_softmax(logits,dim=1), y, reduction='none')
+    def forward(self, x, y, m, i,*args):
+        # i contains repeative task values of batch size.
+        i = i.detach()
+        task_index = i[0]
+        
+        logits = self.predict(x, m, task_index)
+        loss = self.losses[task_index](logits,y)
         return loss, logits
 
     def configure_optimizers(self, lr):
