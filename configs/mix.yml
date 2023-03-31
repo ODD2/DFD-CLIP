@@ -17,12 +17,20 @@ data:
       dataset: RPPG
     - name: Deepfake
       dataset: FFPP
+      types:
+        - "REAL"
+        - "DF"
+        - "FS"
+        - "F2F"
   eval:
     - name: rPPG
       dataset: RPPG
       train_ratio: 0.8
     - name: Deepfake
       dataset: FFPP
+      types:
+        - "REAL"
+        - "NT"
 
 trainer:
   batch_size: 10

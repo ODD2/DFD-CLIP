@@ -13,9 +13,17 @@ data:
   train:
     - name: Deepfake
       dataset: FFPP
+      types:
+        - "REAL"
+        - "DF"
+        - "FS"
+        - "F2F"
   eval:
     - name: Deepfake
       dataset: FFPP
+      types:
+        - "REAL"
+        - "NT"
 
 trainer:
   batch_size: 10
