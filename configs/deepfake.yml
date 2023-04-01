@@ -13,6 +13,8 @@ data:
   train:
     - name: Deepfake
       dataset: FFPP
+      compressions: 
+        - "c23"
       types:
         - "REAL"
         - "DF"
@@ -21,6 +23,8 @@ data:
   eval:
     - name: Deepfake
       dataset: FFPP
+      compressions: 
+        - "c23"
       types:
         - "REAL"
         - "NT"
