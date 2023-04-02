@@ -38,7 +38,7 @@ def cache_best_model(agent):
     main_metric =  sum(target_metrics) / max(len(target_metrics) ,0)
     current_best = getattr(agent, 'best_main_metric', main_metric)
 
-    if getattr(builtins, agent.compare_fn)(main_metric, current_best) <= main_metric:
+    if getattr(builtins, agent.compare_fn)(main_metric, current_best) == main_metric:
         # update best
         agent.accelerator.print(f'best model updated with {agent.main_metric} of', main_metric,
                                 f'(past SOTA: {current_best})')

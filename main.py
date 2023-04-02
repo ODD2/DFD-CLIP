@@ -4,7 +4,7 @@ import random
 import re
 import argparse
 import logging
-from datetime import timedelta
+from datetime import timedelta,datetime
 
 import numpy as np
 import torch
@@ -253,7 +253,7 @@ def init_accelerator(config):
 
         project_name = f'{project_name}_{version}'
     else:
-        project_name = re.sub('/', '_', config.tracking.project_name)
+        project_name = os.path.join(re.sub('/', '_', config.tracking.project_name),datetime.utcnow().strftime("%m%dT%H%M"))
 
     accelerator.init_trackers(project_name)
     accelerator.tracking_dir = os.path.join(tracking_root, project_name)
