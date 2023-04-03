@@ -15,11 +15,11 @@ data:
   train:
     - name: rPPG
       dataset: RPPG
-      scale: 1.0
+      scale: 0.5
       train_ratio: 0.8
     - name: Deepfake
       dataset: FFPP
-      scale: 1.0
+      scale: 0.7
       compressions: 
         - "c23"
       types:
@@ -31,10 +31,10 @@ data:
     - name: rPPG
       dataset: RPPG
       train_ratio: 0.8
-      scale: 1.0
+      scale: 0.5
     - name: Deepfake
       dataset: FFPP
-      scale: 1.0
+      scale: 0.7
       compressions: 
         - "c23"
       types:
