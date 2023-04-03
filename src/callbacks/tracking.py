@@ -15,16 +15,16 @@ def update_trackers(agent):
 
     # Comment out the following lines due to the new training structure utilize more than one dataset.
 
-    # if not isinstance(agent, Trainer):
-    #     return
+    if not isinstance(agent, Trainer):
+        return
 
-    # agent.accelerator.log(
-    #     {
-    #         # f'epoch/{agent.dataloader.dataset.name}': agent.steps * agent.dataloader.total_batch_size / agent.dataloader.total_dataset_length,
-    #         f'lr/{agent.dataloader.dataset.name}': agent.optimizer.param_groups[0]['lr'],
-    #     },
-    #     step=agent.steps,
-    # )
+    agent.accelerator.log(
+        {
+            # f'epoch/{agent.dataloader.dataset.name}': agent.steps * agent.dataloader.total_batch_size / agent.dataloader.total_dataset_length,
+            f'lr': agent.optimizer.param_groups[0]['lr'],
+        },
+        step=agent.steps,
+    )
 
 
 # model saver

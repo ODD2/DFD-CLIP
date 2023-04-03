@@ -1,5 +1,5 @@
 tracking:
-  enabled: false
+  enabled: true
   project_name: mix
   directory: logs/multi_evidence
 
