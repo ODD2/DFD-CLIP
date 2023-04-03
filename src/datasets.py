@@ -339,13 +339,14 @@ class FFPP(Dataset):
         C.name = 'train'
         C.root_dir = './datasets/ffpp/'
         C.detection_level = 'video'
-        C.train_ratio = 0.95
         C.types = ['REAL', 'DF','F2F','FS','NT']
         C.compressions = ['raw']
         C.dataset = "FFPP"
+        C.scale = 1.0
         return C
 
     def __init__(self, config,num_frames,clip_duration, transform=None, accelerator=None, split='train',index=0):
+        assert 0 <= config.scale <= 1
         self.TYPE_DIRS = {
             'REAL': 'real/',
             # 'DFD' : 'data/original_sequences/actors/',
@@ -366,6 +367,7 @@ class FFPP(Dataset):
         self.split = split
         self.transform = transform
         self.index = index
+        self.scale = config.scale
         # available clips per data
         self.video_list = []
 
@@ -427,14 +429,16 @@ class FFPP(Dataset):
             
         for df_type in self.types:
             for comp in self.compressions:
+                comp_videos = []
                 adj_idxs = [i for inner in idxs for i in inner] if df_type == 'REAL' else ['_'.join(idx) for idx in idxs] + ['_'.join(reversed(idx)) for idx in idxs]
 
                 for idx in adj_idxs:
                     if idx in self.video_table[df_type][comp]:
                         clips = int(self.video_table[df_type][comp][idx]["duration"]//self.clip_duration)
-                        self.video_list.append((df_type, comp, idx, clips))
+                        comp_videos.append((df_type, comp, idx, clips))
                     else:
                         accelerator.print(f'Warning: video {path.join(self.root, self.TYPE_DIRS[df_type], comp, "videos", idx)} does not present in the processed dataset.')
+                self.video_list += comp_videos[:int(self.scale * len(comp_videos))]
 
         # stacking up the amount of data clips for further usage
         self.stack_video_clips = [0]
@@ -448,7 +452,6 @@ class FFPP(Dataset):
     def __getitem__(self,idx):
         result = self.get_dict(idx)
         return result["frames"],result["label"],result["mask"],self.index
-
 
     def get_dict(self,idx):
         while(True):
@@ -514,12 +517,16 @@ class RPPG(Dataset):
         C.root_dir = './datasets/hci/'
         C.detection_level = 'video'
         C.train_ratio = 0.95
+        C.scale = 1.0
         C.cropped_folder="cropped_faces"
         C.meta_folder="Metas"
         C.dataset="RPPG"
         return C
 
     def __init__(self, config,num_frames,clip_duration, transform=None, accelerator=None, split='train',index=0):
+        assert 0 <= config.scale <= 1
+        assert 0 <= config.train_ratio <= 1
+
         # TODO: accelerator not implemented
         self.name = config.name
         # HCI datasets recorded videos with 61 fps
@@ -527,7 +534,8 @@ class RPPG(Dataset):
         self.num_frames = num_frames
         self.clip_duration = clip_duration
         self.index = index
-
+        self.scale = config.scale
+        
         # dataset consistency
         rng = random.Random()
         rng.seed(777)
@@ -536,9 +544,9 @@ class RPPG(Dataset):
 
         # dataset splitting
         if split == "train":
-            target_sessions = session_dirs[:int(len(session_dirs)*config.train_ratio)]
+            target_sessions = session_dirs[:int(len(session_dirs)*config.train_ratio*self.scale)]
         elif split == "val":
-            target_sessions = session_dirs[int(len(session_dirs)*config.train_ratio):]
+            target_sessions = session_dirs[int(len(session_dirs)*((1-config.train_ratio)*(1-self.scale) + config.train_ratio)):]
         
         # speed up dataset initialization
         if (not config.meta_folder):

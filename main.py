@@ -99,7 +99,7 @@ def register_trainer_callbacks(config, trainer, **kwargs):
 
     def save_model(trainer):
         trainer.accelerator.save(kwargs['evaluator'].best_model_state,
-                                 os.path.join(trainer.accelerator.tracking_dir, 'best_weights.pt'))
+                                 os.path.join(trainer.accelerator.logging_dir, 'best_weights.pt'))
 
     # timer
     timer_events = ['training', 'epoch', 'batch']
@@ -238,9 +238,7 @@ def init_accelerator(config):
     if not config.tracking.enabled:
         return Accelerator(mixed_precision=config.system.mixed_precision)
 
-    accelerator = Accelerator(mixed_precision=config.system.mixed_precision,
-                              log_with=config.tracking.tool,
-                              logging_dir=config.tracking.directory)
+
 
     # init trackers
     project_name = config.tracking.default_project_prefix
@@ -252,15 +250,22 @@ def init_accelerator(config):
             version += 1
 
         project_name = f'{project_name}_{version}'
+        tracking_dir = os.path.join(tracking_root, project_name)
     else:
-        project_name = os.path.join(re.sub('/', '_', config.tracking.project_name),datetime.utcnow().strftime("%m%dT%H%M"))
+        project_name = re.sub('/', '_', config.tracking.project_name)
+        tracking_dir = os.path.join(tracking_root, project_name,datetime.utcnow().strftime("%m%dT%H%M"))
+
+    accelerator = Accelerator(
+        mixed_precision=config.system.mixed_precision,
+        log_with=config.tracking.tool,
+        logging_dir=tracking_dir
+    )
 
     accelerator.init_trackers(project_name)
-    accelerator.tracking_dir = os.path.join(tracking_root, project_name)
 
     # save current configuration
     if accelerator.is_local_main_process:
-        with open(os.path.join(accelerator.tracking_dir, 'config.yaml'), 'w') as f:
+        with open(os.path.join(accelerator.logging_dir, 'config.yaml'), 'w') as f:
             f.write(config.dump())
 
     return accelerator
