@@ -8,7 +8,6 @@ from datetime import timedelta,datetime
 
 import numpy as np
 import torch
-import wandb
 from accelerate import Accelerator
 from yacs.config import CfgNode as CN
 
@@ -37,7 +36,7 @@ def get_config(config_file):
     C.tracking.directory = 'test-logs'
     C.tracking.project_name = None
     C.tracking.default_project_prefix = 'version'
-    C.tracking.tool = 'all'
+    C.tracking.tool = 'wandb'
     C.tracking.main_metric = 'roc_auc' # accuracy | roc_auc
     C.tracking.compare_fn = 'max' # max | min
 
@@ -99,7 +98,7 @@ def register_trainer_callbacks(config, trainer, **kwargs):
 
     def save_model(trainer):
         trainer.accelerator.save(kwargs['evaluator'].best_model_state,
-                                 os.path.join(trainer.accelerator.logging_dir, 'best_weights.pt'))
+                                 os.path.join(trainer.accelerator.project_dir, 'best_weights.pt'))
 
     # timer
     timer_events = ['training', 'epoch', 'batch']
@@ -183,8 +182,6 @@ def main(config_file):
     if config.system.deterministic_training:
         set_seed(config.system.seed)
 
-    # initialize wandb
-    wandb.init(project=config.tracking.project_name)
     # initialize model
     model = Detector(config.model, config.data.num_frames, accelerator)
 
@@ -258,14 +255,16 @@ def init_accelerator(config):
     accelerator = Accelerator(
         mixed_precision=config.system.mixed_precision,
         log_with=config.tracking.tool,
-        logging_dir=tracking_dir
+        project_dir=tracking_dir
     )
 
     accelerator.init_trackers(project_name)
+    
+    os.makedirs(accelerator.project_dir,exist_ok=True)
 
     # save current configuration
     if accelerator.is_local_main_process:
-        with open(os.path.join(accelerator.logging_dir, 'config.yaml'), 'w') as f:
+        with open(os.path.join(accelerator.project_dir, 'config.yaml'), 'w') as f:
             f.write(config.dump())
 
     return accelerator

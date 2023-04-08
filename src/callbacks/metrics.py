@@ -1,6 +1,5 @@
 import torch
 import  evaluate
-import wandb
 
 class mse:
     def __init__(self):
@@ -106,8 +105,8 @@ def compute_metrics(agent):
         }
     )
     
-    wandb.log(
-        data={
+    agent.accelerator.log(
+        {
             **{
                 f'{type(agent).__name__}/{lname}'.lower():value
                 for lname,value in agent.compute_losses.items()

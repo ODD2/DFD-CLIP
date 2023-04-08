@@ -51,6 +51,7 @@ class Evaluator:
             name:
             iter(dataloader) for name, dataloader in self.dataloaders.items()
         }
+    
         while len(dataset_iterators) > 0:
             self.trigger_callbacks('on_batch_start')
             self.batch_losses = {}
@@ -62,7 +63,7 @@ class Evaluator:
                 except StopIteration:
                     dataset_iterators.pop(name)
                     continue
-
+                
                 loss, logits = self.model(*batch)
 
                 # cache several stats

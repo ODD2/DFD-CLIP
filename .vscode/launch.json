@@ -11,8 +11,8 @@
             "module": "main",
             "args": [
                 "--cfg",
-                "configs/mix.yml",
-                // "--debug"
+                "configs/deepfake.yml",
+                "--debug"
             ],
             "justMyCode": false
         },

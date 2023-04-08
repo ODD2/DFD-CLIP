@@ -8,19 +8,11 @@ def update_trackers(agent):
     if agent.steps % agent.training_eval_interval:
         return
 
-    agent.accelerator.log(
-        agent.compute_losses,
-        step=agent.steps
-    )
-
-    # Comment out the following lines due to the new training structure utilize more than one dataset.
-
     if not isinstance(agent, Trainer):
         return
 
     agent.accelerator.log(
         {
-            # f'epoch/{agent.dataloader.dataset.name}': agent.steps * agent.dataloader.total_batch_size / agent.dataloader.total_dataset_length,
             f'lr': agent.optimizer.param_groups[0]['lr'],
         },
         step=agent.steps,
