@@ -27,7 +27,7 @@ def add_main_metric(agent):
 @torch.no_grad()
 def cache_best_model(agent):
     target_metrics = [value for name,value in agent.compute_metrics.items() if  agent.main_metric in name]
-    main_metric =  sum(target_metrics) / max(len(target_metrics) ,0)
+    main_metric =  sum(target_metrics) / max(len(target_metrics) ,1)
     current_best = getattr(agent, 'best_main_metric', main_metric)
 
     if getattr(builtins, agent.compare_fn)(main_metric, current_best) == main_metric:

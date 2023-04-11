@@ -15,25 +15,36 @@ data:
   train:
     - name: rPPG
       dataset: RPPG
+      compressions: 
+        - "raw"
+      train_ratio: 0.8
     - name: Deepfake
       dataset: FFPP
+      compressions: 
+        - "raw"
       types:
         - "REAL"
         - "DF"
+        - "FS"
+        - "F2F"
   eval:
     - name: rPPG
       dataset: RPPG
-      train_ratio: 0.999
+      compressions: 
+        - "raw"
+      train_ratio: 0.8
     - name: Deepfake
       dataset: FFPP
+      compressions: 
+        - "raw"
       types:
         - "REAL"
-        - "DF"
+        - "NT"
 
 trainer:
   batch_size: 10
   learning_rate: 0.0003
-  max_steps: 5
+  max_steps: 10000
   num_workers: 8
   metrics:
     - name: rPPG
@@ -59,6 +70,6 @@ evaluator:
 
 system:
   deterministic_training: true
-  training_eval_interval: 3
-  evaluation_interval: 5
+  training_eval_interval: 10
+  evaluation_interval: 100
 

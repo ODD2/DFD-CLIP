@@ -11,7 +11,7 @@
             "module": "main",
             "args": [
                 "--cfg",
-                "configs/deepfake.yml",
+                "configs/test.yml",
                 "--debug"
             ],
             "justMyCode": false
