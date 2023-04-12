@@ -251,7 +251,10 @@ class Detector(nn.Module):
         task_index = i[0]
         
         logits = self.predict(x, m, task_index)
+        logits_l2_distance = torch.norm(logits,dim=-1,keepdim=True)
+        logits = 5 * logits / (logits_l2_distance + 1e-10)
         loss = self.losses[task_index](logits,y)
+        
         return loss, logits
 
     def configure_optimizers(self, lr):
