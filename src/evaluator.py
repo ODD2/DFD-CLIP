@@ -46,6 +46,7 @@ class Evaluator:
         self.trigger_callbacks('on_evaluation_start')
         self.steps = trainer.steps
         self.model = trainer.model.eval()
+        self.batch_num = 0
 
         dataset_iterators = {
             name:
@@ -70,7 +71,7 @@ class Evaluator:
                 self.batch_losses[name] = loss.detach()
                 self.batch_logits[name] = logits.detach()
                 self.batch_labels[name] = batch[1].detach()
-
+            self.batch_num += 1
             self.batch_loss_info = ",".join([f"{losses.mean().item()}({name}_loss) " for name,losses in self.batch_losses.items()])
             self.trigger_callbacks('on_batch_end')
         self.trigger_callbacks('on_evaluation_end')

@@ -16,8 +16,6 @@ data:
     - name: rPPG
       dataset: RPPG
       train_ratio: 0.8
-      compressions: 
-        - "c23"
     - name: Deepfake
       dataset: FFPP
       compressions: 
@@ -31,8 +29,6 @@ data:
     - name: rPPG
       dataset: RPPG
       train_ratio: 0.8
-      compressions: 
-        - "c23"
     - name: Deepfake
       dataset: FFPP
       compressions: 

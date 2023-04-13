@@ -160,10 +160,10 @@ def register_evaluator_callbacks(config, evaluator, **kwargs):
         evaluator.add_callback('on_evaluation_end', cache_best_model)
 
     # stdout logger
-    evaluator.add_callback(
-        'on_dataloader_end',
-        lambda evaluator: evaluator.accelerator.print(f'evaluation of {evaluator.dataloader.dataset.name} completed in {evaluator.dataloader_duration:.2f}s')
+    evaluator.add_callback('on_batch_end',
+        lambda evaluator: evaluator.accelerator.print(f'{evaluator.step}.{evaluator.batch_num} | loss {evaluator.batch_loss_info}, {evaluator.batch_duration:.2f}s')
     )
+    
     evaluator.add_callback(
         'on_evaluation_end',
         lambda evaluator: evaluator.accelerator.print(f'evaluation completed in {evaluator.evaluation_duration:.2f}')
