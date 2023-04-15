@@ -161,9 +161,9 @@ def register_evaluator_callbacks(config, evaluator, **kwargs):
 
     # stdout logger
     evaluator.add_callback('on_batch_end',
-        lambda evaluator: evaluator.accelerator.print(f'{evaluator.step}.{evaluator.batch_num} | loss {evaluator.batch_loss_info}, {evaluator.batch_duration:.2f}s')
+        lambda evaluator: evaluator.accelerator.print(f'{evaluator.steps}.{evaluator.batch_num} | loss {evaluator.batch_loss_info}')
     )
-    
+
     evaluator.add_callback(
         'on_evaluation_end',
         lambda evaluator: evaluator.accelerator.print(f'evaluation completed in {evaluator.evaluation_duration:.2f}')

@@ -23,6 +23,13 @@
             "module": "test",
             "args": [],
             "justMyCode": false
-        }
+        },
+        {
+            "name": "BPM Preprocess",
+            "type": "python",
+            "request": "launch",
+            "module": "preprocessing.rppg",
+            "justMyCode": false
+        },
     ]
 }
