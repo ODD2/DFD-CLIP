@@ -1,9 +1,11 @@
-from os import path, scandir, makedirs
+import sys
+import os
 import random
 import pickle
 import json
 import cv2
 import math
+from os import path, scandir, makedirs
 
 import torch
 from torch.utils.data import Dataset
@@ -11,6 +13,7 @@ from torchvision.io import VideoReader
 from tqdm.auto import tqdm
 from yacs.config import CfgNode as CN
 
+import traceback
 
 import pandas as pd
 import heartpy as hp
@@ -351,14 +354,15 @@ class RPPG(Dataset):
         C.scale = 1.0
         C.cropped_folder="cropped_faces"
         C.meta_folder="Metas"
+        C.measure_folder = "Measures"
         C.dataset="RPPG"
         C.compressions = ["raw"]
         return C
 
-    def __init__(self, config,num_frames,clip_duration, transform=None, accelerator=None, split='train',index=0):
-        assert 0 <= config.scale <= 1
-        assert 0 <= config.train_ratio <= 1
-        assert split in ["train","val"]
+    def __init__(self, config,num_frames,clip_duration, transform=None, accelerator=None, split='train', index=0, save_meta=False):
+        assert 0 <= config.scale <= 1, "config.scale out of range"
+        assert 0 <= config.train_ratio <= 1, "config.train_ratio out of range"
+        assert split in ["train","val"], "split value not acceptable"
 
         # TODO: accelerator not implemented
         self.name = config.name
@@ -392,6 +396,12 @@ class RPPG(Dataset):
                 ) 
                 for session_dir in target_sessions
             ]
+            if(save_meta):
+                for meta in self.session_metas:
+                    meta_dir = meta.session_dir.replace("Sessions","Metas")
+                    makedirs(meta_dir,exist_ok=True)
+                    with open(path.join(meta_dir,"meta.pickle"),"wb") as file:
+                        pickle.dump(obj=meta,file=file)
         else:
             logging.info("Meta folder specified, loading meta infos....")
             self.session_metas = [None for _ in range(len(target_sessions))]
@@ -415,8 +425,29 @@ class RPPG(Dataset):
                     video_folders=[path.join(config.cropped_folder,comp)]
                 )
             ]
-        logging.debug(f"Number of session metas after checking: {len(self.session_metas)}")
+        logging.info("Session meta filtered.")
+        logging.debug(f"Current number of sessions: {len(self.session_metas)}")
 
+        # load rppg heartrate measures.
+        _session_measures = []
+        _session_metas = []
+
+        for meta in self.session_metas:
+            try:
+                with open(path.join(meta.session_dir.replace("Sessions","Measures"),"data.pickle"),"rb") as f:
+                    _session_measures.append(
+                        pickle.load(f)
+                    )
+                    _session_metas.append(meta)
+            except Exception as e:
+                continue
+
+        self.session_metas = _session_metas
+        self.session_measures = _session_measures
+        logging.info("Session measures loaded.")
+        logging.debug(f"Current number of sessions: {len(self.session_metas)}")
+        logging.debug(f"Number of session metas ready for training: {len(self.session_metas)}")
+        
         # calculate available clips per session
         self.session_clips = [int(meta.duration // self.clip_duration) for meta in self.session_metas]
 
@@ -433,58 +464,82 @@ class RPPG(Dataset):
         result = self.get_dict(idx)
         return result["frames"],result["label"],result["mask"],self.index
         
-    def get_dict(self,idx):
+    def get_dict(self,idx,runtime=False):
         while(True):
             try:
                 comp = self.compressions[int(idx //self.stack_session_clips[-1])]
                 idx = idx % self.stack_session_clips[-1]
                 session_idx =  next(i for i,x in enumerate(self.stack_session_clips) if  idx < x)
                 session_meta = self.session_metas[session_idx]
+                session_measure= self.session_measures[session_idx]
                 session_offset_duration =  (idx - (0 if session_idx == 0 else self.stack_session_clips[session_idx-1]))*self.clip_duration
+                hr_data = None
+                measures = None
+                wd = None
+
+                logging.debug(f"session idx:{session_idx}")
                 # heart rate data processing
-                signals, signal_headers, _ = reader.read_edf(session_meta.bdf_path,ch_names=["EXG1","EXG2","EXG3","Status"])
-                _hr_datas = []
-                for hr_channel_idx in range(3):
-                    try:
-                        assert  int(session_meta.session_hr_sample_freq) == int(signal_headers[hr_channel_idx]["sample_frequency"])
-                        # - the ERG sample frequency
-                        hr_sample_freq =  session_meta.session_hr_sample_freq
-                        # - the amount of samples to skip, including the 30s stimulation offset and session clip offset.
-                        hr_sample_offset =  session_meta.flag_hr_beg_sample + int(session_offset_duration*hr_sample_freq)
-                        # - the amount of samples for the duration of a clip
-                        hr_clip_samples = int(hr_sample_freq*self.clip_duration)
-                        # - fetch heart rate data of clip duration
-                        _hr_data = signals[hr_channel_idx][hr_sample_offset:hr_sample_offset + hr_clip_samples]
-                        # - preprocess the ERG data: filter out the noise.
-                        _hr_data = hp.filter_signal(_hr_data, cutoff = 0.05, sample_rate = session_meta.session_hr_sample_freq, filtertype='notch')
-                        # - scale down the ERG value to 3.4 max.
-                        _hr_data = (_hr_data - _hr_data.min())/(_hr_data.max()-_hr_data.min()) * 3.4
-                        # - resample the ERG
-                        _hr_data = resample(_hr_data, len(_hr_data) * 4)
-                        # - process the ERG data: get measurements.
-                        _wd, _measures = hp.process(hp.scale_data(_hr_data),session_meta.session_hr_sample_freq * 4)
-                        # - nan/error check
-                        if(_measures["bpm"] > 180 or _measures["bpm"] < 41):
+                 # - the ERG sample frequency
+                hr_sample_freq =  session_meta.session_hr_sample_freq
+                # - the amount of samples to skip, including the 30s stimulation offset and session clip offset.
+                hr_sample_offset =  session_meta.flag_hr_beg_sample + int(session_offset_duration*hr_sample_freq)
+                # - the amount of samples for the duration of a clip
+                hr_clip_samples = int(hr_sample_freq*self.clip_duration)
+                # - the end sample of the session clip
+                hr_sample_end = hr_sample_offset + hr_clip_samples
+                if(not runtime):
+                    # - interpolate the hr sample
+                    measure_idx =  next(i for i,x in enumerate(session_measure["idx"]) if  hr_sample_end <= x)
+                    assert 0 < measure_idx <= len(session_measure["idx"]) , f"erroneous measure index {measure_idx} for end sample {hr_sample_end}"
+                    # - calculate the distance ratio of the session clip to the two nearest preprocessed measure locations.
+                    measure_ratio = (session_measure["idx"][measure_idx] - hr_sample_end) / (session_measure["idx"][measure_idx] - session_measure["idx"][measure_idx-1])
+                    # - perform interpolation
+                    bpm = (
+                        measure_ratio  * session_measure["data"][measure_idx-1]["bpm"] +
+                        (1 - measure_ratio ) * session_measure["data"][measure_idx]["bpm"] 
+                    )
+                else:
+                    signals, signal_headers, _ = reader.read_edf(session_meta.bdf_path,ch_names=["EXG1","EXG2","EXG3","Status"])
+                    _hr_datas = []
+                    for hr_channel_idx in range(3):
+                        try:
+                            assert  int(session_meta.session_hr_sample_freq) == int(signal_headers[hr_channel_idx]["sample_frequency"]), "heart rate frequency mismatch between metadata and the bdf file."
+                            # - fetch heart rate data of clip duration
+                            _hr_data = signals[hr_channel_idx][hr_sample_offset:hr_sample_offset + hr_clip_samples]
+                            # - preprocess the ERG data: filter out the noise.
+                            _hr_data = hp.filter_signal(_hr_data, cutoff = 0.05, sample_rate = session_meta.session_hr_sample_freq, filtertype='notch')
+                            # - scale down the ERG value to 3.4 max.
+                            _hr_data = (_hr_data - _hr_data.min())/(_hr_data.max()-_hr_data.min()) * 3.4
+                            # - resample the ERG
+                            _hr_data = resample(_hr_data, len(_hr_data) * 4)
+                            # - process the ERG data: get measurements.
+                            _wd, _measures = hp.process(hp.scale_data(_hr_data),session_meta.session_hr_sample_freq * 4)
+                            # - nan/error check
+                            if(_measures["bpm"] > 180 or _measures["bpm"] < 41):
+                                continue
+
+                            for v in _measures.values():
+                                # ignore
+                                if type(v)==float and math.isnan(v):
+                                    break
+                            else:
+                                # - save for comparison.
+                                _hr_datas.append((_hr_data,_measures,_wd))
+                        except Exception as e:
+                            logging.debug(f"Error occur during heart rate analysis for index {idx}:{e}")
                             continue
 
-                        for v in _measures.values():
-                            # ignore
-                            if type(v)==float and math.isnan(v):
-                                break
-                        else:
-                            # - save for comparison.
-                            _hr_datas.append((_hr_data,_measures,_wd))
-                    except Exception as e:
-                        logging.debug(f"Error occur during heart rate analysis for index {idx}:{e}")
-                        continue
+                    if(len(_hr_datas) == 0):
+                        raise Exception(f"Unable to process the ERG data for index {idx}")
                 
-                if(len(_hr_datas) == 0):
-                    raise Exception(f"Unable to process the ERG data for index {idx}")
-                
-                # get the best ERG measurement result with the sdnn
-                best_pair = sorted(_hr_datas,key=lambda x : x[1]["sdnn"])[0]
-                hr_data,measures,wd = best_pair[0], best_pair[1], best_pair[2]
-                bpm = measures["bpm"]
+                    # get the best ERG measurement result with the sdnn
+                    best_pair = sorted(_hr_datas,key=lambda x : x[1]["sdnn"])[0]
+                    hr_data,measures,wd = best_pair[0], best_pair[1], best_pair[2]
+                    bpm = measures["bpm"]
+
+                # - heart rate validation
+                assert 41 <= bpm <= 180, f"bpm located out of the defined range: {bpm}"
+                # - create label
                 label = torch.tensor([1/(pow(2*math.pi,0.5))*pow(math.e,(-pow((k-(bpm-41)),2)/2)) for k in range(180)])
 
                 # video frame processing
@@ -494,7 +549,7 @@ class RPPG(Dataset):
                     path.join("Sessions" if not self.cropped_folder else self.cropped_folder,comp)
                 )
                 cap = cv2.VideoCapture(comp_video_path)
-                assert int(session_meta.session_video_sample_freq) == int(cap.get(cv2.CAP_PROP_FPS)), f"{int(session_meta.session_video_sample_freq)},{int(cap.get(cv2.CAP_PROP_FPS))}"
+                assert int(session_meta.session_video_sample_freq) == int(cap.get(cv2.CAP_PROP_FPS)), f"video sample frequency mismatch: {int(session_meta.session_video_sample_freq)},{int(cap.get(cv2.CAP_PROP_FPS))}"
                 video_sample_freq = session_meta.session_video_sample_freq
                 # - the amount of frames to skip
                 video_sample_offset = int(session_meta.flag_video_beg_sample - session_meta.session_video_beg_sample) + int(video_sample_freq * session_offset_duration)
@@ -514,7 +569,7 @@ class RPPG(Dataset):
                             frames.append(torch.from_numpy(cv2.cvtColor(frame,cv2.COLOR_BGR2RGB).transpose((2,0,1))))
                             next_sample_idx = int(round(len(frames) * video_sample_stride))
                     else:
-                        raise NotImplementedError()
+                        raise Exception(f"unable to read video frame of sample index:{sample_idx}")
                 frames = torch.stack(frames)
 
                 # transformation
@@ -533,17 +588,11 @@ class RPPG(Dataset):
                     "frames":frames,
                     "label":label,
                     "mask":mask,
-                    "hr_data":hr_data,
-                    "measures":measures,
-                    "wd":wd
+                    "hr_data": hr_data,
+                    "wd":wd,
+                    "measure":measures,
                 }
             except Exception as e:
                 logging.error(f"Error occur: {e}")
+                logging.error(traceback.format_exc())
                 idx = random.randrange(0,len(self))
-
-    def save_meta(self,meta_folder="Metas"):
-        for meta in self.session_metas:
-            meta_dir = meta.session_dir.replace("Sessions",meta_folder)
-            makedirs(meta_dir,exist_ok=True)
-            with open(path.join(meta_dir,"meta.pickle"),"wb") as file:
-                pickle.dump(obj=meta,file=file)
