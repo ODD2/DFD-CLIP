@@ -8,7 +8,7 @@ from datetime import timedelta,datetime
 
 import numpy as np
 import torch
-from accelerate import Accelerator
+from accelerate import Accelerator,DistributedDataParallelKwargs
 from yacs.config import CfgNode as CN
 
 from src.models import Detector
@@ -231,9 +231,10 @@ def main(config_file):
 
 
 def init_accelerator(config):
+    accelerate_kwargs_handlers=[DistributedDataParallelKwargs(find_unused_parameters=True)]
     # init huggingface accelerator
     if not config.tracking.enabled:
-        return Accelerator(mixed_precision=config.system.mixed_precision)
+        return Accelerator(mixed_precision=config.system.mixed_precision,kwargs_handlers=accelerate_kwargs_handlers)
 
 
 
@@ -255,7 +256,8 @@ def init_accelerator(config):
     accelerator = Accelerator(
         mixed_precision=config.system.mixed_precision,
         log_with=config.tracking.tool,
-        project_dir=tracking_dir
+        project_dir=tracking_dir,
+        kwargs_handlers=accelerate_kwargs_handlers
     )
 
     accelerator.init_trackers(project_name)

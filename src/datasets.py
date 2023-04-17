@@ -150,9 +150,9 @@ class SessionMeta:
     def video_length(self):
         return self.session_video_end_sample - self.session_video_beg_sample + 1
 
-    def require_check(self,video=False, gae=False, bdf=False,time=False,video_folders=["cropped_faces"]):
+    def require_check(self,video=False, gae=False, bdf=False,time=False,video_folders=["Sessions"]):
         if(video):
-            if(not self.video_path or not path.exists(self.video_path)):
+            if(not self.video_path):
                 return False
             for folder in video_folders:
                 if(not path.exists(self.video_path.replace("Sessions",folder))):
@@ -466,7 +466,7 @@ class RPPG(Dataset):
         return self.stack_session_clips[-1]*len(self.compressions)
     
     def __getitem__(self,idx):
-        result = self.get_dict(idx)
+        result = self.get_dict(idx,self.runtime)
         return result["frames"],result["label"],result["mask"],self.index
         
     def get_dict(self,idx,runtime=False):
@@ -476,7 +476,6 @@ class RPPG(Dataset):
                 idx = idx % self.stack_session_clips[-1]
                 session_idx =  next(i for i,x in enumerate(self.stack_session_clips) if  idx < x)
                 session_meta = self.session_metas[session_idx]
-                session_measure= self.session_measures[session_idx]
                 session_offset_duration =  (idx - (0 if session_idx == 0 else self.stack_session_clips[session_idx-1]))*self.clip_duration
                 hr_data = None
                 measures = None
@@ -494,6 +493,7 @@ class RPPG(Dataset):
                 hr_sample_end = hr_sample_offset + hr_clip_samples
                 if(not runtime):
                     # - interpolate the hr sample
+                    session_measure= self.session_measures[session_idx]
                     measure_idx =  next(i for i,x in enumerate(session_measure["idx"]) if  hr_sample_end <= x)
                     assert 0 < measure_idx <= len(session_measure["idx"]) , f"erroneous measure index {measure_idx} for end sample {hr_sample_end}"
                     # - calculate the distance ratio of the session clip to the two nearest preprocessed measure locations.
