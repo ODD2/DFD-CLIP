@@ -307,18 +307,17 @@ class FFPP(Dataset):
                 video_clip_samples = int(video_sample_freq * self.clip_duration)
                 # - the amount of frames to skip in order to meet the num_frames per clip.(excluding the head & tail frames )
                 video_sample_stride = (video_clip_samples-1) / (self.num_frames - 1)
-                # - fast forward to the the sampling start.
-                cap.set(cv2.CAP_PROP_POS_FRAMES,video_sample_offset)
                 # - fetch frames of clip duration
                 next_sample_idx = 0
-                for sample_idx in range(video_clip_samples):
+                for sample_idx in range(self.num_frames):
+                    video_sample_idx = video_sample_offset+next_sample_idx
+                    cap.set(cv2.CAP_PROP_POS_FRAMES,video_sample_idx)
                     ret, frame = cap.read()
                     if(ret):
-                        if(sample_idx == next_sample_idx):
-                            frames.append(torch.from_numpy(cv2.cvtColor(frame,cv2.COLOR_BGR2RGB).transpose((2,0,1))))
-                            next_sample_idx = int(round(len(frames) * video_sample_stride))
+                        frames.append(torch.from_numpy(cv2.cvtColor(frame,cv2.COLOR_BGR2RGB).transpose((2,0,1))))
+                        next_sample_idx = int(round((sample_idx+1) * video_sample_stride))
                     else:
-                        raise NotImplementedError()
+                        raise Exception(f"unable to read video frame of sample index:{video_sample_idx}")
                 frames = torch.stack(frames)
 
 
@@ -562,19 +561,19 @@ class RPPG(Dataset):
                 video_clip_samples = int(session_meta.session_video_sample_freq * self.clip_duration)
                 # - the amount of frames to skip in order to meet the num_frames per clip.(excluding the head & tail frames )
                 video_sample_stride = (video_clip_samples-1) / (self.num_frames - 1)
-                # - fast forward to the the sampling start.
-                cap.set(cv2.CAP_PROP_POS_FRAMES,video_sample_offset)
                 # - fetch frames of clip duration
                 logging.debug(f"Loading video: {comp_video_path}, sample offset:{video_sample_offset}")
+                # - fast forward to the the sampling start.
                 next_sample_idx = 0
-                for sample_idx in range(video_clip_samples):
+                for sample_idx in range(self.num_frames):
+                    video_sample_idx = video_sample_offset+next_sample_idx
+                    cap.set(cv2.CAP_PROP_POS_FRAMES,video_sample_idx)
                     ret, frame = cap.read()
                     if(ret):
-                        if(sample_idx == next_sample_idx):
-                            frames.append(torch.from_numpy(cv2.cvtColor(frame,cv2.COLOR_BGR2RGB).transpose((2,0,1))))
-                            next_sample_idx = int(round(len(frames) * video_sample_stride))
+                        frames.append(torch.from_numpy(cv2.cvtColor(frame,cv2.COLOR_BGR2RGB).transpose((2,0,1))))
+                        next_sample_idx = int(round((sample_idx+1) * video_sample_stride))
                     else:
-                        raise Exception(f"unable to read video frame of sample index:{sample_idx}")
+                        raise Exception(f"unable to read video frame of sample index:{video_sample_idx}")
                 frames = torch.stack(frames)
 
                 # transformation
