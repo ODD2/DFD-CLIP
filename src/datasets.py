@@ -357,6 +357,7 @@ class RPPG(Dataset):
         C.measure_folder = "Measures"
         C.dataset="RPPG"
         C.compressions = ["raw"]
+        C.runtime = True
         return C
 
     def __init__(self, config,num_frames,clip_duration, transform=None, accelerator=None, split='train', index=0, save_meta=False):
@@ -374,6 +375,7 @@ class RPPG(Dataset):
         self.scale = config.scale
         self.compressions = config.compressions
         self.cropped_folder =  config.cropped_folder
+        self.runtime = config.runtime
         
         # dataset consistency
         rng = random.Random()
@@ -429,23 +431,26 @@ class RPPG(Dataset):
         logging.debug(f"Current number of sessions: {len(self.session_metas)}")
 
         # load rppg heartrate measures.
-        _session_measures = []
-        _session_metas = []
+        if(not self.runtime):
+            _session_measures = []
+            _session_metas = []
 
-        for meta in self.session_metas:
-            try:
-                with open(path.join(meta.session_dir.replace("Sessions","Measures"),"data.pickle"),"rb") as f:
-                    _session_measures.append(
-                        pickle.load(f)
-                    )
-                    _session_metas.append(meta)
-            except Exception as e:
-                continue
+            for meta in self.session_metas:
+                try:
+                    with open(path.join(meta.session_dir.replace("Sessions","Measures"),"data.pickle"),"rb") as f:
+                        _session_measures.append(
+                            pickle.load(f)
+                        )
+                        _session_metas.append(meta)
+                except Exception as e:
+                    continue
 
-        self.session_metas = _session_metas
-        self.session_measures = _session_measures
-        logging.info("Session measures loaded.")
-        logging.debug(f"Current number of sessions: {len(self.session_metas)}")
+            self.session_metas = _session_metas
+            self.session_measures = _session_measures
+            logging.info("Session measures loaded.")
+            logging.debug(f"Current number of sessions: {len(self.session_metas)}")
+
+        # total number of ready-to-use session metadata.
         logging.debug(f"Number of session metas ready for training: {len(self.session_metas)}")
         
         # calculate available clips per session
