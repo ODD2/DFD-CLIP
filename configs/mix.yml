@@ -5,7 +5,7 @@ tracking:
 
 model:
   out_dim: 
-    - 180
+    - 140
     - 2
   losses:
     - kl_div

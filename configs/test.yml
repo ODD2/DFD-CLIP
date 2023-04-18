@@ -1,14 +1,14 @@
 tracking:
-  enabled: true
+  enabled: false
   project_name: test
   directory: logs/multi_evidence
 
 model:
   out_dim: 
-    - 180
+    - 140
     - 2
   losses:
-    - expect
+    - lmse
     - auc_roc
 
 data:
@@ -16,7 +16,6 @@ data:
     - name: rPPG
       dataset: RPPG
       train_ratio: 0.8
-      scale: 0.1
       compressions: 
         - "c23"
       label_type: num
@@ -33,7 +32,6 @@ data:
     - name: rPPG
       dataset: RPPG
       train_ratio: 0.8
-      scale: 0.1
       compressions: 
         - "c23"
       label_type: num
@@ -48,12 +46,12 @@ data:
 trainer:
   batch_size: 10
   learning_rate: 0.0003
-  max_steps: 100
+  max_steps: 3000
   num_workers: 8
   metrics:
     - name: rPPG
       types:
-        - expect_mse
+        - rmse
     - name: Deepfake
       types:
         - accuracy
@@ -66,7 +64,7 @@ evaluator:
   metrics:
     - name: rPPG
       types:
-        - expect_mse
+        - rmse
     - name: Deepfake
       types:
         - accuracy
