@@ -363,13 +363,14 @@ class RPPG(Dataset):
         C.dataset="RPPG"
         C.compressions = ["raw"]
         C.runtime = True
+        C.label_type = "dist"
         return C
 
     def __init__(self, config,num_frames,clip_duration, transform=None, accelerator=None, split='train', index=0, save_meta=False):
         assert 0 <= config.scale <= 1, "config.scale out of range"
         assert 0 <= config.train_ratio <= 1, "config.train_ratio out of range"
         assert split in ["train","val"], "split value not acceptable"
-
+        assert config.label_type in ["num","dist"]
         # TODO: accelerator not implemented
         self.name = config.name
         # HCI datasets recorded videos with 61 fps
@@ -381,6 +382,7 @@ class RPPG(Dataset):
         self.compressions = config.compressions
         self.cropped_folder =  config.cropped_folder
         self.runtime = config.runtime
+        self.label_type = config.label_type
         
         # dataset consistency
         rng = random.Random()
@@ -552,7 +554,10 @@ class RPPG(Dataset):
                 # - heart rate validation
                 assert 41 <= bpm <= 180, f"bpm located out of the defined range: {bpm}"
                 # - create label
-                label = torch.tensor([1/(pow(2*math.pi,0.5))*pow(math.e,(-pow((k-(bpm-41)),2)/2)) for k in range(180)])
+                if(self.label_type == "dist"):
+                    label = torch.tensor([1/(pow(2*math.pi,0.5))*pow(math.e,(-pow((k-(bpm-41)),2)/2)) for k in range(180)])
+                elif(self.label_type == "num"):
+                    label =  bpm - 41
                 logging.debug(f"rPPG Load Duration:{time() - rppg_load_begin}")
 
 

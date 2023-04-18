@@ -6,6 +6,10 @@ from torch import nn
 from . import clip
 import torchvision.transforms as T
 
+def lmse(logits,y):
+    b,w = logits.shape
+    return  torch.log(torch.pow(logits @ torch.tensor([ i for i in range(w)]).float().to(logits.device) - y,2))
+
 def kl_div(logits,y):
     return torch.nn.functional.kl_div(torch.nn.functional.log_softmax(logits,dim=1), y, reduction='none')
 

@@ -1,6 +1,34 @@
 import torch
 import  evaluate
 
+class rmse:
+    def __init__(self):
+        self.expects = []
+        self.labels = []
+
+    def add_batch(self,pred_labels,pred_probs,labels):
+        b,w =  pred_probs.shape
+        self.expects.append(pred_probs @ torch.tensor([i for i in range(w)]).float().to(pred_probs.device))
+        self.labels.append(labels)
+
+    def compute(self):
+        if(not len(self.expects) == len(self.labels) or len(self.expects) == 0 ):
+            raise Exception("nothing to compute, please atleast call add_batch once before compute")
+        else:
+            expects =  torch.cat(self.expects)
+            labels = torch.cat(self.labels)
+            self.expects = []
+            self.labels = []
+            return {
+                f"{self.__class__.__name__}":
+                torch.sqrt(torch.sum(torch.pow(expects-labels,2)/len(expects))).item()
+            }
+
+                
+
+
+
+
 class mse:
     def __init__(self):
         self.calc = evaluate.load("mse","multilist")
@@ -13,6 +41,8 @@ class mse:
 
     def compute(self):
         return self.calc.compute()
+
+
     
 class roc_auc:
     def __init__(self):

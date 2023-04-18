@@ -1,19 +1,27 @@
 tracking:
   enabled: true
-  project_name: mix
+  project_name: test
   directory: logs/multi_evidence
 
 model:
   out_dim: 
+    - 180
     - 2
   losses:
+    - expect
     - auc_roc
 
 data:
   train:
+    - name: rPPG
+      dataset: RPPG
+      train_ratio: 0.8
+      scale: 0.1
+      compressions: 
+        - "c23"
+      label_type: num
     - name: Deepfake
       dataset: FFPP
-      scale: 0.7
       compressions: 
         - "c23"
       types:
@@ -22,9 +30,15 @@ data:
         - "FS"
         - "F2F"
   eval:
+    - name: rPPG
+      dataset: RPPG
+      train_ratio: 0.8
+      scale: 0.1
+      compressions: 
+        - "c23"
+      label_type: num
     - name: Deepfake
       dataset: FFPP
-      scale: 0.7
       compressions: 
         - "c23"
       types:
@@ -34,9 +48,12 @@ data:
 trainer:
   batch_size: 10
   learning_rate: 0.0003
-  max_steps: 10000
+  max_steps: 100
   num_workers: 8
   metrics:
+    - name: rPPG
+      types:
+        - expect_mse
     - name: Deepfake
       types:
         - accuracy
@@ -47,6 +64,9 @@ evaluator:
   batch_size: 8
   num_workers: 8
   metrics:
+    - name: rPPG
+      types:
+        - expect_mse
     - name: Deepfake
       types:
         - accuracy
