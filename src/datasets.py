@@ -5,9 +5,11 @@ import pickle
 import json
 import cv2
 import math
+from time import time
 from os import path, scandir, makedirs
 
 import torch
+import torchvision
 from torch.utils.data import Dataset
 from torchvision.io import VideoReader
 from tqdm.auto import tqdm
@@ -20,7 +22,7 @@ import heartpy as hp
 import xml.etree.ElementTree as ET
 from glob import glob
 from scipy.signal import resample
-from pyedflib import highlevel as reader
+from pyedflib import highlevel as BDFReader
 import logging
 
 class SessionMeta:
@@ -104,7 +106,7 @@ class SessionMeta:
 
     def fetch_bdf_infos(self):
         if(self.bdf_path):
-            signals, signal_headers, header = reader.read_edf(self.bdf_path,ch_names=["EXG1"])
+            signals, signal_headers, header = BDFReader.read_edf(self.bdf_path,ch_names=["EXG1"])
             self.session_hr_sample_freq = signal_headers[0]["sample_frequency"]
             del signals,signal_headers,header
     
@@ -294,32 +296,36 @@ class FFPP(Dataset):
                 df_type, comp, video_name, clips = self.video_list[video_idx]
                 video_meta = self.video_table[df_type][comp][video_name]
                 video_offset_duration =  (idx - (0 if video_idx == 0 else self.stack_video_clips[video_idx-1]))*self.clip_duration
-                logging.debug(f"idx:{idx}, video_idx:{video_idx},df_type:{df_type},comp:{comp},video_name:{video_name}")
-                logging.debug(f"video_meta:{video_meta}")
+                logging.debug(f"Item/Video Index:{idx}/{video_idx}")
+                logging.debug(f"Item DF/COMP:{df_type}/{comp}")
+
                 # video frame processing
                 frames = []
-                cap = cv2.VideoCapture(video_meta["path"])
+                vid_reader = torchvision.io.VideoReader(
+                    video_meta["path"], 
+                    "video"
+                )
                 # - frames per second
-                video_sample_freq = video_meta["fps"]
+                video_sample_freq = vid_reader.get_metadata()["video"]["fps"][0]
                 # - the amount of frames to skip
-                video_sample_offset = int(video_sample_freq * video_offset_duration)
+                video_sample_offset = int(video_offset_duration)
                 # - the amount of frames for the duration of a clip
                 video_clip_samples = int(video_sample_freq * self.clip_duration)
                 # - the amount of frames to skip in order to meet the num_frames per clip.(excluding the head & tail frames )
-                video_sample_stride = (video_clip_samples-1) / (self.num_frames - 1)
+                video_sample_stride = ((video_clip_samples-1) / (self.num_frames - 1))/video_sample_freq
+                logging.debug(f"Loading Video: {video_meta['path']}")
+                logging.debug(f"Sample Offset: {video_sample_offset}")
+                logging.debug(f"Sample Stride: {video_sample_stride}")
                 # - fetch frames of clip duration
-                next_sample_idx = 0
                 for sample_idx in range(self.num_frames):
-                    video_sample_idx = video_sample_offset+next_sample_idx
-                    cap.set(cv2.CAP_PROP_POS_FRAMES,video_sample_idx)
-                    ret, frame = cap.read()
-                    if(ret):
-                        frames.append(torch.from_numpy(cv2.cvtColor(frame,cv2.COLOR_BGR2RGB).transpose((2,0,1))))
-                        next_sample_idx = int(round((sample_idx+1) * video_sample_stride))
-                    else:
-                        raise Exception(f"unable to read video frame of sample index:{video_sample_idx}")
+                    try:
+                        vid_reader.seek(video_sample_offset + sample_idx * video_sample_stride)
+                        frame = next(vid_reader)
+                        frames.append(frame["data"])
+                    except Exception as e:
+                        raise Exception(f"unable to read video frame of sample index:{sample_idx}")
                 frames = torch.stack(frames)
-
+                del vid_reader
 
                 # transformation
                 if (self.transform):
@@ -469,6 +475,7 @@ class RPPG(Dataset):
         return result["frames"],result["label"],result["mask"],self.index
         
     def get_dict(self,idx,runtime=False):
+        item_load_begin = time()
         while(True):
             try:
                 comp = self.compressions[int(idx //self.stack_session_clips[-1])]
@@ -479,10 +486,11 @@ class RPPG(Dataset):
                 hr_data = None
                 measures = None
                 wd = None
+                logging.debug(f"Item/Session Index:{idx}/{session_idx}")
 
-                logging.debug(f"session idx:{session_idx}")
                 # heart rate data processing
-                 # - the ERG sample frequency
+                rppg_load_begin = time()
+                # - the ERG sample frequency
                 hr_sample_freq =  session_meta.session_hr_sample_freq
                 # - the amount of samples to skip, including the 30s stimulation offset and session clip offset.
                 hr_sample_offset =  session_meta.flag_hr_beg_sample + int(session_offset_duration*hr_sample_freq)
@@ -503,7 +511,7 @@ class RPPG(Dataset):
                         (1 - measure_ratio ) * session_measure["data"][measure_idx]["bpm"] 
                     )
                 else:
-                    signals, signal_headers, _ = reader.read_edf(session_meta.bdf_path,ch_names=["EXG1","EXG2","EXG3","Status"])
+                    signals, signal_headers, _ = BDFReader.read_edf(session_meta.bdf_path,ch_names=["EXG1","EXG2","EXG3","Status"])
                     _hr_datas = []
                     for hr_channel_idx in range(3):
                         try:
@@ -545,36 +553,43 @@ class RPPG(Dataset):
                 assert 41 <= bpm <= 180, f"bpm located out of the defined range: {bpm}"
                 # - create label
                 label = torch.tensor([1/(pow(2*math.pi,0.5))*pow(math.e,(-pow((k-(bpm-41)),2)/2)) for k in range(180)])
+                logging.debug(f"rPPG Load Duration:{time() - rppg_load_begin}")
+
 
                 # video frame processing
+                video_load_begin= time()
                 frames = []
                 comp_video_path = session_meta.video_path.replace(
                     "Sessions",
                     path.join("Sessions" if not self.cropped_folder else self.cropped_folder,comp)
                 )
-                cap = cv2.VideoCapture(comp_video_path)
-                assert int(session_meta.session_video_sample_freq) == int(cap.get(cv2.CAP_PROP_FPS)), f"video sample frequency mismatch: {int(session_meta.session_video_sample_freq)},{int(cap.get(cv2.CAP_PROP_FPS))}"
+                vid_reader = torchvision.io.VideoReader(
+                    comp_video_path, 
+                    "video"
+                )
+                assert int(session_meta.session_video_sample_freq) == int(vid_reader.get_metadata()["video"]["fps"][0]), f"video sample frequency mismatch: {int(session_meta.session_video_sample_freq)},{int(cap.get(cv2.CAP_PROP_FPS))}"
                 video_sample_freq = session_meta.session_video_sample_freq
                 # - the amount of frames to skip
-                video_sample_offset = int(session_meta.flag_video_beg_sample - session_meta.session_video_beg_sample) + int(video_sample_freq * session_offset_duration)
+                video_sample_offset = int(session_meta.flag_video_beg_sample - session_meta.session_video_beg_sample)/video_sample_freq + int(session_offset_duration)
                 # - the amount of frames for the duration of a clip
                 video_clip_samples = int(session_meta.session_video_sample_freq * self.clip_duration)
                 # - the amount of frames to skip in order to meet the num_frames per clip.(excluding the head & tail frames )
-                video_sample_stride = (video_clip_samples-1) / (self.num_frames - 1)
+                video_sample_stride = (video_clip_samples-1) / (self.num_frames - 1) / video_sample_freq
                 # - fetch frames of clip duration
-                logging.debug(f"Loading video: {comp_video_path}, sample offset:{video_sample_offset}")
+                logging.debug(f"Loading video: {comp_video_path}")
+                logging.debug(f"Sample Offset: {video_sample_offset}")
+                logging.debug(f"Sample Stride: {video_sample_stride}")
                 # - fast forward to the the sampling start.
-                next_sample_idx = 0
                 for sample_idx in range(self.num_frames):
-                    video_sample_idx = video_sample_offset+next_sample_idx
-                    cap.set(cv2.CAP_PROP_POS_FRAMES,video_sample_idx)
-                    ret, frame = cap.read()
-                    if(ret):
-                        frames.append(torch.from_numpy(cv2.cvtColor(frame,cv2.COLOR_BGR2RGB).transpose((2,0,1))))
-                        next_sample_idx = int(round((sample_idx+1) * video_sample_stride))
-                    else:
-                        raise Exception(f"unable to read video frame of sample index:{video_sample_idx}")
+                    try:
+                        vid_reader.seek(video_sample_offset +video_sample_stride*sample_idx)
+                        frame = next(vid_reader)
+                        frames.append(frame["data"])
+                    except Exception as e:
+                        raise Exception(f"unable to read video frame of sample index:{sample_idx}")
                 frames = torch.stack(frames)
+                del vid_reader
+                logging.debug(f"Video Load Duration:{time() - video_load_begin}")
 
                 # transformation
                 if (self.transform):
@@ -583,11 +598,13 @@ class RPPG(Dataset):
                 # padding and masking missing frames.
                 mask = torch.tensor([1.] * len(frames) +
                                     [0.] * (self.num_frames - len(frames)), dtype=torch.bool)
+                
                 if len(frames) < self.num_frames:
                     diff = self.num_frames - len(frames)
                     padding = torch.zeros((diff, *frames.shape[1:]),dtype=torch.uint8)
                     frames = torch.concatenate((frames, padding))
                 
+                logging.debug(f"Item Load Duration:{time() - item_load_begin}")
                 return {
                     "frames":frames,
                     "label":label,
@@ -596,6 +613,7 @@ class RPPG(Dataset):
                     "wd":wd,
                     "measure":measures,
                 }
+            
             except Exception as e:
                 logging.error(f"Error occur: {e}")
                 logging.error(traceback.format_exc())
