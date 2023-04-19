@@ -6,12 +6,18 @@ from torch import nn
 from . import clip
 import torchvision.transforms as T
 
-def lmse(logits,y):
+def mse(logits,y):
     b,w = logits.shape
-    return  torch.log(torch.pow(logits.softmax(dim=-1) @ torch.tensor([ i for i in range(w)]).float().to(logits.device) - y,2))
+    value =  torch.pow(
+        logits.softmax(dim=-1) @ torch.tensor([ i for i in range(w)]).float().to(logits.device) - y,
+        2
+    )
+    return value / 1000
+
 
 def kl_div(logits,y):
     return torch.nn.functional.kl_div(torch.nn.functional.log_softmax(logits,dim=1), y, reduction='none')
+
 
 def auc_roc(logits,y):
     return torch.nn.functional.cross_entropy(logits, y, reduction='none')

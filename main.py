@@ -19,7 +19,8 @@ from src.callbacks.timer import start_timer, end_timer
 from src.callbacks.metrics import init_metrics, update_metrics, compute_metrics
 from src.callbacks.tracking import update_trackers, add_main_metric, cache_best_model
 
-def get_config(config_file):
+def get_config(params):
+    config_file = params.cfg
     C = CN()
 
     # system
@@ -33,7 +34,7 @@ def get_config(config_file):
     # tracking
     C.tracking = CN()
     C.tracking.enabled = False
-    C.tracking.directory = 'test-logs'
+    C.tracking.directory = 'logs'
     C.tracking.project_name = None
     C.tracking.default_project_prefix = 'version'
     C.tracking.tool = 'wandb'
@@ -78,8 +79,11 @@ def get_config(config_file):
             )
             for d_eval in C.data.eval
         ]
-       
-        
+
+    if params.test:
+        C.tracking.enabled = True
+        C.tracking.directory = 'logs'
+        C.tracking.project_name = "test"
 
     C.freeze()
 
@@ -170,9 +174,9 @@ def register_evaluator_callbacks(config, evaluator, **kwargs):
     )
 
 
-def main(config_file):
+def main(params):
     
-    config = get_config(config_file)
+    config = get_config(params)
     
     # initialize accelerator and trackers (if enabled)
     accelerator = init_accelerator(config)
@@ -293,7 +297,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--debug",
         action="store_true",
-        help="Debugging mode"
+        help="Debugging Mode"
+    )
+    parser.add_argument(
+        "--test",
+        action="store_true",
+        help="Testing Mode"
     )
 
     params = parser.parse_args()
@@ -308,4 +317,4 @@ if __name__ == "__main__":
         logging.basicConfig(level="DEBUG")
         
 
-    main(params.cfg)
+    main(params)
