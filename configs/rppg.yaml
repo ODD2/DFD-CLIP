@@ -1,0 +1,31 @@
+tracking:
+  enabled: true
+  project_name: RPPG
+  directory: logs/rppg-test
+
+model:
+  out_dim: 180
+
+data:
+  train:
+    - name: train
+      dataset: RPPG
+  eval:
+    - name: validation
+      dataset: RPPG
+
+trainer:
+  batch_size: 10
+  learning_rate: 0.0003
+  max_steps: 10000
+  num_workers: 8
+
+evaluator:
+  batch_size: 8
+  num_workers: 8
+
+system:
+  deterministic_training: true
+  training_eval_interval: 10
+  evaluation_interval: 50
+
