@@ -364,11 +364,13 @@ class RPPG(Dataset):
         C.compressions = ["raw"]
         C.runtime = True
         C.label_type = "dist"
+        C.label_dim = 140
         return C
 
     def __init__(self, config,num_frames,clip_duration, transform=None, accelerator=None, split='train', index=0, save_meta=False):
         assert 0 <= config.scale <= 1, "config.scale out of range"
         assert 0 <= config.train_ratio <= 1, "config.train_ratio out of range"
+        assert 140 <= config.label_dim , "config.label_dim should be atleast 140."
         assert split in ["train","val"], "split value not acceptable"
         assert config.label_type in ["num","dist"]
         # TODO: accelerator not implemented
@@ -383,7 +385,7 @@ class RPPG(Dataset):
         self.cropped_folder =  config.cropped_folder
         self.runtime = config.runtime
         self.label_type = config.label_type
-        
+        self.label_dim = config.label_dim
         # dataset consistency
         rng = random.Random()
         rng.seed(777)
@@ -572,7 +574,7 @@ class RPPG(Dataset):
                     comp_video_path, 
                     "video"
                 )
-                assert int(session_meta.session_video_sample_freq) == int(vid_reader.get_metadata()["video"]["fps"][0]), f"video sample frequency mismatch: {int(session_meta.session_video_sample_freq)},{int(cap.get(cv2.CAP_PROP_FPS))}"
+                assert int(session_meta.session_video_sample_freq) == int(vid_reader.get_metadata()["video"]["fps"][0]), f"video sample frequency mismatch: {int(session_meta.session_video_sample_freq)},{int(vid_reader.get_metadata()['video']['fps'][0])}"
                 video_sample_freq = session_meta.session_video_sample_freq
                 # - the amount of frames to skip
                 video_sample_offset = int(session_meta.flag_video_beg_sample - session_meta.session_video_beg_sample)/video_sample_freq + int(session_offset_duration)
