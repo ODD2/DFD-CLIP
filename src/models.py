@@ -7,12 +7,12 @@ from . import clip
 import torchvision.transforms as T
 
 def mse(logits,y):
-    b,w = logits.shape
     value =  torch.pow(
-        logits.softmax(dim=-1) @ torch.tensor([ i for i in range(w)]).float().to(logits.device) - y,
+        logits[:,:140].softmax(dim=-1) @ torch.tensor([ i for i in range(140) ]).float().to(logits.device) - y,
         2
     )
     return value / 1000
+
 
 
 def kl_div(logits,y):

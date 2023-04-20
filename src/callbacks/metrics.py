@@ -24,10 +24,6 @@ class rmse:
                 torch.sqrt(torch.sum(torch.pow(expects-labels,2)/len(expects))).item()
             }
 
-                
-
-
-
 
 class mse:
     def __init__(self):
@@ -41,8 +37,7 @@ class mse:
 
     def compute(self):
         return self.calc.compute()
-
-
+    
     
 class roc_auc:
     def __init__(self):
