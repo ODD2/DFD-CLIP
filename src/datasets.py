@@ -557,7 +557,7 @@ class RPPG(Dataset):
                 assert 41 <= bpm <= 180, f"bpm located out of the defined range: {bpm}"
                 # - create label
                 if(self.label_type == "dist"):
-                    label = torch.tensor([1/(pow(2*math.pi,0.5))*pow(math.e,(-pow((k-(bpm-41)),2)/2)) for k in range(140)])
+                    label = torch.tensor([1/(pow(2*math.pi,0.5))*pow(math.e,(-pow((k-(bpm-41)),2)/2)) for k in range(self.label_dim)])
                 elif(self.label_type == "num"):
                     label =  bpm - 41
                 logging.debug(f"rPPG Load Duration:{time() - rppg_load_begin}")

@@ -49,6 +49,7 @@ trainer:
   batch_size: 10
   learning_rate: 0.0003
   max_steps: 3000
+  teach_at: 1000
   num_workers: 8
   metrics:
     - name: rPPG
@@ -61,7 +62,7 @@ trainer:
 
 
 evaluator:
-  batch_size: 8
+  batch_size: 10
   num_workers: 8
   metrics:
     - name: rPPG

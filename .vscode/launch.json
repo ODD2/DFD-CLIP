@@ -11,8 +11,8 @@
             "module": "main",
             "args": [
                 "--cfg",
-                "configs/test.yml",
-                "--debug"
+                "configs/mix_mt.yaml",
+                "--test"
             ],
             "justMyCode": false
         },

@@ -189,7 +189,7 @@ class Decoder(nn.Module):
             self.projections.append(getattr(self,_name))
 
 
-    def forward(self, kvs, m, output_index=0):
+    def forward(self, kvs, m):
         m = m.repeat_interleave(kvs[0]['k'].size(2), dim=-1)
         kvs = [{k: (v + self.positional_embedding).flatten(1, 2) for k, v in kv.items()} for kv in kvs]
 
@@ -197,7 +197,8 @@ class Decoder(nn.Module):
         x = self.ln_pre(x)
         x = self.transformer(x, kvs, m)
         x = self.ln_post(x)
-        x = x.squeeze(1) @ self.projections[output_index]
+        x = x.squeeze(1)
+        x = [x @ projection for projection in self.projections]
         return x
 
 
@@ -237,13 +238,13 @@ class Detector(nn.Module):
 
         self.transform = self._transform(self.encoder.input_resolution)
         self.decode_stride = config.decode_stride
+        self.out_dim = config.out_dim
         self.losses = []
         
         for loss in config.losses:
             self.losses.append(globals()[loss])
 
-
-    def predict(self, x, m, i):
+    def predict(self, x, m):
         b, t, c, h, w = x.shape
         with torch.no_grad():
             # get key and value from each CLIP ViT layer
@@ -253,19 +254,23 @@ class Detector(nn.Module):
             # strided export
             kvs = kvs[::self.decode_stride]
 
-        return self.decoder(kvs, m, i)
+        task_logits = self.decoder(kvs, m)
+        for i in range(len(task_logits)):
+            logits_l2_distance = torch.norm(task_logits[i],dim=-1,keepdim=True)
+            task_logits[i] = 5 * task_logits[i] / (logits_l2_distance + 1e-10)
 
-    def forward(self, x, y, m, i,*args):
-        # i contains repeative task values of batch size.
-        i = i.detach()
-        task_index = i[0]
+        return task_logits
+
+    def forward(self, x, y, m,single_task,*args,**kargs):
         
-        logits = self.predict(x, m, task_index)
-        logits_l2_distance = torch.norm(logits,dim=-1,keepdim=True)
-        logits = 5 * logits / (logits_l2_distance + 1e-10)
-        loss = self.losses[task_index](logits,y)
+        task_logits = self.predict(x, m)
         
-        return loss, logits
+        task_losses = [
+            loss_fn(logits, labels) if single_task==None or i == single_task else 0
+            for i, loss_fn,logits,labels in zip(range(len(self.losses)),self.losses,task_logits,y)
+        ]
+        
+        return task_losses, task_logits
 
     def configure_optimizers(self, lr):
         return torch.optim.AdamW(params=self.decoder.parameters(), lr=lr)

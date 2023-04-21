@@ -1,3 +1,5 @@
+import copy
+import torch
 from collections import defaultdict
 
 from torch.utils.data.dataloader import DataLoader
@@ -19,9 +21,12 @@ class Trainer:
         C.batch_size = 16
         C.learning_rate = 1e-3
         C.metrics = []
+        C.teach_at = 50
+        C.ema_ratio = 0.999
         return C
 
     def __init__(self, config, accelerator, model, datasets):
+        assert 0 <= config.teach_at <= config.max_steps
         self.config = config
         self.accelerator = accelerator
         self.callbacks = defaultdict(list)
@@ -36,10 +41,11 @@ class Trainer:
         )
 
         self.dataloaders = {}
-      
+        self.teaching = False
+        self.teacher =  copy.deepcopy(self.model)
         # let the accelerator prepare the objects for ddp and amp
-        self.model, self.optimizer, self.lr_scheduler = self.accelerator.prepare(self.model, self.optimizer, self.lr_scheduler)
-        
+        self.model, self.optimizer, self.lr_scheduler,self.teacher = self.accelerator.prepare(self.model, self.optimizer, self.lr_scheduler,self.teacher)
+
         for dataset in datasets:
             self.dataloaders[dataset.name] = self.accelerator.prepare(
                 DataLoader(
@@ -77,6 +83,7 @@ class Trainer:
             self.batch_losses = {}
             self.batch_logits = {}
             self.batch_labels = {}
+            self.model.train()
             for name in dataset_iterators.keys():
                 try:
                     batch = next(dataset_iterators[name])
@@ -84,27 +91,64 @@ class Trainer:
                     dataset_iterators[name] = iter(self.dataloaders[name])
                     batch = next(dataset_iterators[name])
 
-                self.model.train()
-            
+                # cache the index of source task.
+                task_index = batch[-1][0]
+                if(self.teaching):
+                    with torch.no_grad():
+                        # pseudo labels from EMA teacher
+                        teacher_logits = self.teacher.predict(batch[0],batch[2])
 
+                    # ASSUMPTION: all labels are probabilities.
+                    # replace with true labels of the target task
+                    task_labels = [ 
+                        batch[1] if i == task_index else teacher_logits[i].softmax(dim=-1) 
+                        for i in range(len(self.model.out_dim))
+                    ]
+
+                    # update the batch data
+                    batch[1] = task_labels
+                else:
+                    task_labels = [ 
+                        batch[1] if i == task_index else None
+                        for i in range(len(self.model.out_dim))
+                    ]
+
+                    batch[1] = task_labels
+
+                
                 # forward and calculate the loss
-                loss, logits = self.model(*batch)
+                task_losses, task_logits = self.model(
+                    *batch[:3],
+                    single_task=(task_index if not self.teaching else None)
+                )
 
                 # backprop and update the parameters
                 # the loss from the model is should not to be reduced
                 # so the duplicate samples can be detected
-                self.accelerator.backward(loss.mean())
-                
+                if(self.teaching):
+                    self.accelerator.backward(sum([loss.mean() for loss in task_losses]))
+                else:
+                    self.accelerator.backward(task_losses[task_index].mean())
+
                 # cache output artifacts
-                self.batch_losses[name] = loss.detach()
-                self.batch_logits[name] = logits.detach()
-                self.batch_labels[name] = batch[1].detach()
+                self.batch_losses[name] = task_losses[task_index].detach()
+                self.batch_logits[name] = task_logits[task_index].detach()
+                self.batch_labels[name] = batch[1][task_index].detach()
             
             self.optimizer.step()
             self.lr_scheduler.step()
+            self.model.zero_grad()
 
+            # update the teacher's parameters in the EMA manner.
+            for p1,p2 in zip(self.teacher.parameters(),self.model.parameters()):
+                p1.data = (1-self.config.ema_ratio)*p1.data+self.config.ema_ratio*p2.data
 
             self.steps += 1
+            # activate teaching mode 
+            if(not self.teaching and self.config.teach_at < self.steps):
+                self.teaching = True
+            
+            # batch loss infos
             self.batch_loss_info = ",".join([f"{losses.mean().item()}({name}_loss) " for name,losses in self.batch_losses.items()])
             self.trigger_callbacks('on_batch_end')
 
