@@ -64,13 +64,23 @@ class Evaluator:
                 except StopIteration:
                     dataset_iterators.pop(name)
                     continue
-                
-                loss, logits = self.model(*batch)
-
+                # cache the index of source task.
+                task_index = batch[-1][0]
+                # create labels
+                task_labels = [ 
+                        batch[1] if i == task_index else None
+                        for i in range(len(self.model.out_dim))
+                ]
+                batch[1] = task_labels
+                # forward
+                task_losses, task_logits = self.model(
+                    *batch[:3],
+                    single_task=task_index
+                )
                 # cache several stats
-                self.batch_losses[name] = loss.detach()
-                self.batch_logits[name] = logits.detach()
-                self.batch_labels[name] = batch[1].detach()
+                self.batch_losses[name] = task_losses[task_index].detach()
+                self.batch_logits[name] = task_logits[task_index].detach()
+                self.batch_labels[name] = batch[1][task_index].detach()
             self.batch_num += 1
             self.batch_loss_info = ",".join([f"{losses.mean().item()}({name}_loss) " for name,losses in self.batch_losses.items()])
             self.trigger_callbacks('on_batch_end')
