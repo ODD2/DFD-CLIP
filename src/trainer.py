@@ -98,7 +98,7 @@ class Trainer:
                 if(self.teaching):
                     with torch.no_grad():
                         # pseudo labels from EMA teacher
-                        teacher_logits = self.teacher.predict(batch[0],batch[2])
+                        _ , teacher_logits = self.teacher(batch[0],[None]*self.total_tasks,batch[2],single_task=-1)
 
                     # ASSUMPTION: all labels are probabilities.
                     # replace with true labels of the target task
