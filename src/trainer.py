@@ -33,6 +33,8 @@ class Trainer:
 
         self.model = model
         self.optimizer = model.configure_optimizers(config.learning_rate / 25)
+        # pre-cache number of tasks before distributed learning for further usage
+        self.total_tasks = len(model.out_dim)
 
         self.lr_scheduler = OneCycleLR(
             optimizer=self.optimizer,
@@ -102,7 +104,7 @@ class Trainer:
                     # replace with true labels of the target task
                     task_labels = [ 
                         batch[1] if i == task_index else teacher_logits[i].softmax(dim=-1) 
-                        for i in range(len(self.model.out_dim))
+                        for i in range(self.total_tasks)
                     ]
 
                     # update the batch data
@@ -110,7 +112,7 @@ class Trainer:
                 else:
                     task_labels = [ 
                         batch[1] if i == task_index else None
-                        for i in range(len(self.model.out_dim))
+                        for i in range(self.total_tasks)
                     ]
 
                     batch[1] = task_labels

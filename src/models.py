@@ -235,7 +235,6 @@ class Detector(nn.Module):
         with accelerator.main_process_first():
             self.encoder = disable_gradients(clip.load(config.architecture)[0].visual.float())
         self.decoder = Decoder(self.encoder, config, num_frames)
-
         self.transform = self._transform(self.encoder.input_resolution)
         self.decode_stride = config.decode_stride
         self.out_dim = config.out_dim

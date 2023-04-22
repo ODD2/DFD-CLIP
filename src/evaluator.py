@@ -47,6 +47,7 @@ class Evaluator:
         self.steps = trainer.steps
         self.model = trainer.model.eval()
         self.batch_num = 0
+        self.total_tasks = trainer.total_tasks
 
         dataset_iterators = {
             name:
@@ -69,7 +70,7 @@ class Evaluator:
                 # create labels
                 task_labels = [ 
                         batch[1] if i == task_index else None
-                        for i in range(len(self.model.out_dim))
+                        for i in range(self.total_tasks)
                 ]
                 batch[1] = task_labels
                 # forward
