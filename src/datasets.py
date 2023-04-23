@@ -625,3 +625,333 @@ class RPPG(Dataset):
                 logging.error(f"Error occur: {e}")
                 logging.error(traceback.format_exc())
                 idx = random.randrange(0,len(self))
+
+class CDF(Dataset):
+    @staticmethod
+    def get_default_config():
+        C = CN()
+        C.name = 'CDF'
+        C.root_dir = './datasets/cdf/'
+        C.dataset = "CDF"
+        C.scale = 1.0
+        return C
+
+    def __init__(self, config,num_frames,clip_duration, transform=None, accelerator=None, split="test",index=0,*args,**kwargs):
+        assert 0 <= config.scale <= 1
+        assert split == "test", f"Split '{split.upper()}' Not Implemented."
+
+        self.name = config.name
+        self.root = path.expanduser(config.root_dir)
+        self.num_frames = num_frames
+        self.clip_duration = clip_duration
+        self.transform = transform
+        self.index = index
+        self.scale = config.scale
+        # available clips per data
+        self.video_list = []
+
+        # stacking data clips
+        self.stack_video_clips = []
+
+        self._build_video_table(accelerator)
+        self._build_video_list(accelerator)
+        
+    def _build_video_table(self, accelerator):
+        self.video_table = {}
+
+        progress_bar = tqdm(["REAL","FAKE"], disable=not accelerator.is_local_main_process)
+        for label in progress_bar:
+            self.video_table[label] = {}
+            video_cache = path.expanduser(f'./.cache/dfd-clip/videos/{self.__class__.__name__}-{label}.pkl')
+            if path.isfile(video_cache):
+                with open(video_cache, 'rb') as f:
+                    videos = pickle.load(f)
+                self.video_table[label] = videos
+                continue
+
+            # subdir
+            subdir = path.join(self.root, label, 'videos')
+
+            video_metas =  {}
+
+            # video table
+            for f in  scandir(subdir):
+                if '.avi' in f.name:
+                    cap = cv2.VideoCapture(f.path)
+                    fps = int(cap.get(cv2.CAP_PROP_FPS))
+                    frames = round(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                    video_metas[f.name[:-4]] ={
+                        "fps" : fps,
+                        "frames" : frames,
+                        "duration": frames/fps,
+                        "path": f.path
+                    }
+                    cap.release()
+            
+            # description
+            progress_bar.set_description(f"{label}/videos")
+
+            # caching
+            if accelerator.is_local_main_process:
+                makedirs(path.dirname(video_cache), exist_ok=True)
+                with open(video_cache, 'wb') as f:
+                    pickle.dump(video_metas, f)
+
+            self.video_table[label] = video_metas
+        
+    def _build_video_list(self, accelerator):
+        self.video_list = []
+        for label in ["REAL","FAKE"]:
+            video_list = pd.read_csv(
+                path.join(self.root, 'csv_files', f'test_{label.lower()}.csv'),
+                sep=' ',
+                header=None,
+                names=["name","label"]
+            )
+            
+            _videos = []
+
+            for filename in video_list["name"]:
+                name,ext =  os.path.splitext(filename)
+                if name in self.video_table[label]:
+                    clips = int(self.video_table[label][name]["duration"]//self.clip_duration)
+                    _videos.append((label.upper(), name, clips))
+                else:
+                    accelerator.print(f'Warning: video {path.join(self.root, label, "videos", name)} does not present in the processed dataset.')
+            self.video_list += _videos[:int(self.scale * len(_videos))]
+
+        # stacking up the amount of data clips for further usage
+        self.stack_video_clips = [0]
+        for _,_,i in self.video_list:
+            self.stack_video_clips.append(self.stack_video_clips[-1] + i)
+        self.stack_video_clips.pop(0)
+
+    def __len__(self):
+        return self.stack_video_clips[-1]
+    
+    def __getitem__(self,idx):
+        result = self.get_dict(idx)
+        return result["frames"],result["label"],result["mask"],self.index
+
+    def get_dict(self,idx):
+        while(True):
+            try:
+                video_idx =  next(i for i,x in enumerate(self.stack_video_clips) if  idx < x)
+                label, video_name, clips = self.video_list[video_idx]
+                video_meta = self.video_table[label][video_name]
+                video_offset_duration =  (idx - (0 if video_idx == 0 else self.stack_video_clips[video_idx-1]))*self.clip_duration
+                logging.debug(f"Item/Video Index:{idx}/{video_idx}")
+                logging.debug(f"Item LABEL:{label}")
+
+                # video frame processing
+                frames = []
+                vid_reader = torchvision.io.VideoReader(
+                    video_meta["path"], 
+                    "video"
+                )
+                # - frames per second
+                video_sample_freq = vid_reader.get_metadata()["video"]["fps"][0]
+                # - the amount of frames to skip
+                video_sample_offset = int(video_offset_duration)
+                # - the amount of frames for the duration of a clip
+                video_clip_samples = int(video_sample_freq * self.clip_duration)
+                # - the amount of frames to skip in order to meet the num_frames per clip.(excluding the head & tail frames )
+                video_sample_stride = ((video_clip_samples-1) / (self.num_frames - 1))/video_sample_freq
+                logging.debug(f"Loading Video: {video_meta['path']}")
+                logging.debug(f"Sample Offset: {video_sample_offset}")
+                logging.debug(f"Sample Stride: {video_sample_stride}")
+                # - fetch frames of clip duration
+                for sample_idx in range(self.num_frames):
+                    try:
+                        vid_reader.seek(video_sample_offset + sample_idx * video_sample_stride)
+                        frame = next(vid_reader)
+                        frames.append(frame["data"])
+                    except Exception as e:
+                        raise Exception(f"unable to read video frame of sample index:{sample_idx}")
+                frames = torch.stack(frames)
+                del vid_reader
+
+                # transformation
+                if (self.transform):
+                    frames = self.transform(frames)
+
+                # padding and masking missing frames.
+                mask = torch.tensor([1.] * len(frames) +
+                                    [0.] * (self.num_frames - len(frames)), dtype=torch.bool)
+                if len(frames) < self.num_frames:
+                    diff = self.num_frames - len(frames)
+                    padding = torch.zeros((diff, *frames.shape[1:]),dtype=torch.uint8)
+                    frames = torch.concatenate((frames, padding))
+                
+                return {
+                    "frames":frames,
+                    "label": 0 if label == "REAL" else 1,
+                    "mask":mask,
+                }
+            except Exception as e:
+                logging.error(f"Error occur: {e}")
+                idx = random.randrange(0,len(self))
+
+class DFDC(Dataset):
+    @staticmethod
+    def get_default_config():
+        C = CN()
+        C.name = 'DFDC'
+        C.root_dir = './datasets/dfdc/'
+        C.dataset = "DFDC"
+        C.scale = 1.0
+        return C
+
+    def __init__(self, config,num_frames,clip_duration, transform=None, accelerator=None, split="test",index=0,*args,**kwargs):
+        assert 0 <= config.scale <= 1
+        assert split == "test", f"Split '{split.upper()}' Not Implemented."
+
+        self.name = config.name
+        self.root = path.expanduser(config.root_dir)
+        self.num_frames = num_frames
+        self.clip_duration = clip_duration
+        self.transform = transform
+        self.index = index
+        self.scale = config.scale
+        # available clips per data
+        self.video_list = []
+
+        # stacking data clips
+        self.stack_video_clips = []
+
+        self._build_video_table(accelerator)
+        self._build_video_list(accelerator)
+        
+    def _build_video_table(self, accelerator):
+        self.video_table = {}
+
+        video_cache = path.expanduser(f'./.cache/dfd-clip/videos/{self.__class__.__name__}.pkl')
+        if path.isfile(video_cache):
+            with open(video_cache, 'rb') as f:
+                videos = pickle.load(f)
+            self.video_table = videos
+        else:
+            # subdir
+            subdir = path.join(self.root, 'videos')
+
+            video_metas =  {}
+
+            # video table
+            for f in  scandir(subdir):
+                if '.avi' in f.name:
+                    cap = cv2.VideoCapture(f.path)
+                    fps = int(cap.get(cv2.CAP_PROP_FPS))
+                    frames = round(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                    video_metas[f.name[:-4]] ={
+                        "fps" : fps,
+                        "frames" : frames,
+                        "duration": frames/fps,
+                        "path": f.path
+                    }
+                    cap.release()
+
+            # caching
+            if accelerator.is_local_main_process:
+                makedirs(path.dirname(video_cache), exist_ok=True)
+                with open(video_cache, 'wb') as f:
+                    pickle.dump(video_metas, f)
+
+            self.video_table = video_metas
+        
+    def _build_video_list(self, accelerator):
+        self.video_list = []
+
+        video_list = pd.read_csv(
+            path.join(self.root, 'csv_files', f'test.csv'),
+            sep=' ',
+            header=None,
+            names=["name","label"]
+        )
+        
+        _videos = []
+
+        for index, row in video_list.iterrows():
+            filename = row["name"]
+            name,ext =  os.path.splitext(filename)
+            label = "REAL" if row["label"] == 0 else "FAKE"
+            if name in self.video_table:
+                clips = int(self.video_table[name]["duration"]//self.clip_duration)
+                _videos.append((label, name, clips))
+            else:
+                accelerator.print(f'Warning: video {path.join(self.root, label, "videos", name)} does not present in the processed dataset.')
+        self.video_list += _videos[:int(self.scale * len(_videos))]
+
+        # stacking up the amount of data clips for further usage
+        self.stack_video_clips = [0]
+        for _,_,i in self.video_list:
+            self.stack_video_clips.append(self.stack_video_clips[-1] + i)
+        self.stack_video_clips.pop(0)
+
+    def __len__(self):
+        return self.stack_video_clips[-1]
+    
+    def __getitem__(self,idx):
+        result = self.get_dict(idx)
+        return result["frames"],result["label"],result["mask"],self.index
+
+    def get_dict(self,idx):
+        while(True):
+            try:
+                video_idx =  next(i for i,x in enumerate(self.stack_video_clips) if  idx < x)
+                label, video_name, clips = self.video_list[video_idx]
+                video_meta = self.video_table[video_name]
+                video_offset_duration =  (idx - (0 if video_idx == 0 else self.stack_video_clips[video_idx-1]))*self.clip_duration
+                logging.debug(f"Item/Video Index:{idx}/{video_idx}")
+                logging.debug(f"Item LABEL:{label}")
+
+                # video frame processing
+                frames = []
+                vid_reader = torchvision.io.VideoReader(
+                    video_meta["path"], 
+                    "video"
+                )
+                # - frames per second
+                video_sample_freq = vid_reader.get_metadata()["video"]["fps"][0]
+                # - the amount of frames to skip
+                video_sample_offset = int(video_offset_duration)
+                # - the amount of frames for the duration of a clip
+                video_clip_samples = int(video_sample_freq * self.clip_duration)
+                # - the amount of frames to skip in order to meet the num_frames per clip.(excluding the head & tail frames )
+                video_sample_stride = ((video_clip_samples-1) / (self.num_frames - 1))/video_sample_freq
+                logging.debug(f"Loading Video: {video_meta['path']}")
+                logging.debug(f"Sample Offset: {video_sample_offset}")
+                logging.debug(f"Sample Stride: {video_sample_stride}")
+                # - fetch frames of clip duration
+                for sample_idx in range(self.num_frames):
+                    try:
+                        vid_reader.seek(video_sample_offset + sample_idx * video_sample_stride)
+                        frame = next(vid_reader)
+                        frames.append(frame["data"])
+                    except Exception as e:
+                        raise Exception(f"unable to read video frame of sample index:{sample_idx}")
+                frames = torch.stack(frames)
+                del vid_reader
+
+                # transformation
+                if (self.transform):
+                    frames = self.transform(frames)
+
+                # padding and masking missing frames.
+                mask = torch.tensor([1.] * len(frames) +
+                                    [0.] * (self.num_frames - len(frames)), dtype=torch.bool)
+                if len(frames) < self.num_frames:
+                    diff = self.num_frames - len(frames)
+                    padding = torch.zeros((diff, *frames.shape[1:]),dtype=torch.uint8)
+                    frames = torch.concatenate((frames, padding))
+                
+                return {
+                    "frames":frames,
+                    "label": 0 if label == "REAL" else 1,
+                    "mask":mask,
+                }
+            except Exception as e:
+                logging.error(f"Error occur: {e}")
+                idx = random.randrange(0,len(self))
+
+
+
