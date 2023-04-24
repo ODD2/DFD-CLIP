@@ -10,6 +10,15 @@ model:
   losses:
     - kl_div
     - auc_roc
+  decode_mode: index
+  decode_indices:
+    - 0
+    - 2
+    - 4
+    - 6
+    - 8
+    - 10
+  
 
 data:
   train:

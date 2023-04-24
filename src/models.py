@@ -150,8 +150,8 @@ class Transformer(nn.Module):
         super().__init__()
         self.width = width
         self.resblocks = []
-        for i in range(0, len(reference_layers), config.decode_stride):
-            self.resblocks.append(ResidualAttentionBlock(width, heads, config, reference_layers[i]))
+        for layer in reference_layers:
+            self.resblocks.append(ResidualAttentionBlock(width, heads, config, layer))
 
         self.resblocks = nn.Sequential(*self.resblocks)
 
@@ -170,17 +170,25 @@ class Decoder(nn.Module):
     The positional embeddings are shared across patches in the same spatial location
     """
 
-    def __init__(self, encoder, config, num_frames):
+    def __init__(self, detector, config, num_frames):
         super().__init__()
-        width = encoder.width
-        heads = encoder.heads
+        width = detector.encoder.width
+        heads = detector.encoder.heads
         output_dims = config.out_dim
         scale = width ** -0.5
 
         self.class_embedding = nn.Parameter(scale * torch.randn(width))
         self.positional_embedding = nn.Parameter(scale * torch.randn(num_frames, 1, heads, width // heads))
         self.ln_pre = LayerNorm(width)
-        self.transformer = Transformer(width, heads, config, encoder.transformer.resblocks)
+        self.transformer = Transformer(
+            width,
+            heads,
+            config,
+            reference_layers=[
+                detector.encoder.transformer.resblocks[i]
+                for i in detector.layer_indices
+            ],
+        )
         self.ln_post = LayerNorm(width)
         self.projections  = []
         for i,output_dim in enumerate(output_dims):
@@ -224,7 +232,9 @@ class Detector(nn.Module):
     def get_default_config():
         C = CN()
         C.architecture = 'ViT-B/16'
+        C.decode_mode = "stride"
         C.decode_stride = 2
+        C.decode_indices = []
         C.dropout = 0.0
         C.out_dim = []
         C.losses = []
@@ -232,16 +242,29 @@ class Detector(nn.Module):
 
     def __init__(self, config, num_frames, accelerator):
         super().__init__()
+        assert config.decode_mode in ["stride","index"]
+
         with accelerator.main_process_first():
             self.encoder = disable_gradients(clip.load(config.architecture)[0].visual.float())
-        self.decoder = Decoder(self.encoder, config, num_frames)
-        self.transform = self._transform(self.encoder.input_resolution)
-        self.decode_stride = config.decode_stride
+
+        self.decode_mode = config.decode_mode
         self.out_dim = config.out_dim
         self.losses = []
         
         for loss in config.losses:
             self.losses.append(globals()[loss])
+
+        if(self.decode_mode == "stride"):
+            self.layer_indices = list(range(0,len(self.encoder.transformer.resblocks),config.decode_stride))
+        elif(self.decode_mode == "index"):
+            self.layer_indices = config.decode_indices
+        else:
+            raise Exception(f"Unknown decode type: {self.decode_type}")
+
+
+        self.decoder = Decoder(self, config, num_frames)
+        self.transform = self._transform(self.encoder.input_resolution)
+        
 
     def predict(self, x, m):
         b, t, c, h, w = x.shape
@@ -250,10 +273,11 @@ class Detector(nn.Module):
             kvs = self.encoder(x.flatten(0, 1))
             # discard original CLS token and restore temporal dimension
             kvs = [{k: v[:, 1:].unflatten(0, (b, t)) for k, v in kv.items()} for kv in kvs]
-            # strided export
-            kvs = kvs[::self.decode_stride]
+
+            kvs = [kvs[i] for i in self.layer_indices]
 
         task_logits = self.decoder(kvs, m)
+
         for i in range(len(task_logits)):
             logits_l2_distance = torch.norm(task_logits[i],dim=-1,keepdim=True)
             task_logits[i] = 5 * task_logits[i] / (logits_l2_distance + 1e-10)
