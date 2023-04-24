@@ -10,14 +10,8 @@ model:
   losses:
     - kl_div
     - auc_roc
-  decode_mode: index
-  decode_indices:
-    - 0
-    - 2
-    - 4
-    - 6
-    - 8
-    - 10
+  decode_mode: stride
+  decode_stride: 2
   
 
 data:
@@ -61,6 +55,7 @@ trainer:
   teach_at: 1000
   ema_ratio: 0.95
   num_workers: 8
+  mode: teacher
   metrics:
     - name: rPPG
       types:

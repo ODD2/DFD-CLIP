@@ -23,11 +23,14 @@ class Trainer:
         C.metrics = []
         C.teach_at = 50
         C.ema_ratio = 0.999
+        C.mode="normal"
         return C
 
     def __init__(self, config, accelerator, model, datasets):
         assert 0 <= config.teach_at <= config.max_steps
+        assert config.mode in ["normal","teacher"]
         self.config = config
+        self.mode = config.mode
         self.accelerator = accelerator
         self.callbacks = defaultdict(list)
 
@@ -44,7 +47,12 @@ class Trainer:
 
         self.dataloaders = {}
         self.teaching = False
-        self.teacher =  copy.deepcopy(self.model)
+
+        if(self.mode == "teacher"):
+            self.teacher =  copy.deepcopy(self.model)
+        else:
+            self.teacher = None
+        
         # let the accelerator prepare the objects for ddp and amp
         self.model, self.optimizer, self.lr_scheduler,self.teacher = self.accelerator.prepare(self.model, self.optimizer, self.lr_scheduler,self.teacher)
 
@@ -141,13 +149,15 @@ class Trainer:
             self.lr_scheduler.step()
             self.model.zero_grad()
 
-            # update the teacher's parameters in the EMA manner.
-            for p1,p2 in zip(self.teacher.parameters(),self.model.parameters()):
-                p1.data = (1-self.config.ema_ratio)*p1.data+self.config.ema_ratio*p2.data
+            if(self.mode == "teacher"):
+                # update the teacher's parameters in the EMA manner.
+                for p1,p2 in zip(self.teacher.parameters(),self.model.parameters()):
+                    p1.data = (1-self.config.ema_ratio)*p1.data+self.config.ema_ratio*p2.data
 
             self.steps += 1
-            # activate teaching mode 
-            if(not self.teaching and self.config.teach_at < self.steps):
+
+            # activate teaching process 
+            if(self.mode == "teacher" and not self.teaching and self.config.teach_at < self.steps):
                 self.teaching = True
             
             # batch loss infos
