@@ -1,8 +1,5 @@
-import evaluate
-import torch
-
-mse_calc = evaluate.load("mse","multilist")
-
-print(mse_calc.compute(references=[[1,1],[2,2],[3,3]],predictions=[[0,0],[0,0],[0,0]]))
-# mse_calc.add_batch(references=torch.randn((1,10)).tolist(),predictions=torch.randn((1,10)).tolist())
-# mse_calc.compute(references=torch.randn((1,180)),predictions=torch.randn((1,180)))
+from src.datasets import DFDC,FFPP
+from accelerate import Accelerator
+x = FFPP(FFPP.get_default_config(),50,10,lambda x: x, Accelerator(),split="test",pack=True)
+x[44]
+# DFDC.get_default_config().merge_from_other_cfg(FFPP.get_default_config())

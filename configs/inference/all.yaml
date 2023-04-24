@@ -1,0 +1,6 @@
+data:
+  eval:
+    - name: Deepfake
+      dataset: CDF
+    - name: Deepfake
+      dataset: DFDC

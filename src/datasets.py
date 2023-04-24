@@ -181,7 +181,7 @@ class FFPP(Dataset):
         C.scale = 1.0
         return C
 
-    def __init__(self, config,num_frames,clip_duration, transform=None, accelerator=None, split='train',index=0):
+    def __init__(self, config,num_frames,clip_duration, transform=None, accelerator=None, split='train',index=0,pack=False):
         assert 0 <= config.scale <= 1
         self.TYPE_DIRS = {
             'REAL': 'real/',
@@ -204,6 +204,7 @@ class FFPP(Dataset):
         self.transform = transform
         self.index = index
         self.scale = config.scale
+        self.pack = pack
         # available clips per data
         self.video_list = []
 
@@ -271,7 +272,8 @@ class FFPP(Dataset):
                 for idx in adj_idxs:
                     if idx in self.video_table[df_type][comp]:
                         clips = int(self.video_table[df_type][comp][idx]["duration"]//self.clip_duration)
-                        comp_videos.append((df_type, comp, idx, clips))
+                        if(clips > 0):
+                            comp_videos.append((df_type, comp, idx, clips))
                     else:
                         accelerator.print(f'Warning: video {path.join(self.root, self.TYPE_DIRS[df_type], comp, "videos", idx)} does not present in the processed dataset.')
                 self.video_list += comp_videos[:int(self.scale * len(comp_videos))]
@@ -283,13 +285,33 @@ class FFPP(Dataset):
         self.stack_video_clips.pop(0)
 
     def __len__(self):
-        return self.stack_video_clips[-1]
+        if(self.pack):
+            return len(self.video_list)
+        else:
+            return self.stack_video_clips[-1]
     
     def __getitem__(self,idx):
-        result = self.get_dict(idx)
-        return result["frames"],result["label"],result["mask"],self.index
+        if(self.pack):
+            start = 0 if idx == 0 else self.stack_video_clips[idx-1]
+            end = self.stack_video_clips[idx]
+            frames = []
+            label = []
+            mask = []
+            for i in range(start,end):
+                try:
+                    result = self.get_dict(idx)
+                except:
+                    continue
+                else:
+                    frames.append(result["frames"])
+                    label.append(result["label"])
+                    mask.append(result["mask"])
+            return frames,label,mask,self.index
+        else:
+            result = self.get_dict(idx)
+            return result["frames"],result["label"],result["mask"],self.index
 
-    def get_dict(self,idx):
+    def get_dict(self,idx,block=False):
         while(True):
             try:
                 video_idx =  next(i for i,x in enumerate(self.stack_video_clips) if  idx < x)
@@ -346,7 +368,10 @@ class FFPP(Dataset):
                 }
             except Exception as e:
                 logging.error(f"Error occur: {e}")
-                idx = random.randrange(0,len(self))
+                if block:
+                    raise e
+                else:
+                    idx = random.randrange(0,len(self))
 
 class RPPG(Dataset):
     @staticmethod
@@ -636,7 +661,7 @@ class CDF(Dataset):
         C.scale = 1.0
         return C
 
-    def __init__(self, config,num_frames,clip_duration, transform=None, accelerator=None, split="test",index=0,*args,**kwargs):
+    def __init__(self, config,num_frames,clip_duration, transform=None, accelerator=None, split="test",index=0,pack=False,*args,**kwargs):
         assert 0 <= config.scale <= 1
         assert split == "test", f"Split '{split.upper()}' Not Implemented."
 
@@ -647,6 +672,7 @@ class CDF(Dataset):
         self.transform = transform
         self.index = index
         self.scale = config.scale
+        self.pack = pack
         # available clips per data
         self.video_list = []
 
@@ -715,7 +741,8 @@ class CDF(Dataset):
                 name,ext =  os.path.splitext(filename)
                 if name in self.video_table[label]:
                     clips = int(self.video_table[label][name]["duration"]//self.clip_duration)
-                    _videos.append((label.upper(), name, clips))
+                    if(clips > 0):
+                        _videos.append((label.upper(), name, clips))
                 else:
                     accelerator.print(f'Warning: video {path.join(self.root, label, "videos", name)} does not present in the processed dataset.')
             self.video_list += _videos[:int(self.scale * len(_videos))]
@@ -727,13 +754,33 @@ class CDF(Dataset):
         self.stack_video_clips.pop(0)
 
     def __len__(self):
-        return self.stack_video_clips[-1]
-    
-    def __getitem__(self,idx):
-        result = self.get_dict(idx)
-        return result["frames"],result["label"],result["mask"],self.index
+        if(self.pack):
+            return len(self.video_list)
+        else:
+            return self.stack_video_clips[-1]
 
-    def get_dict(self,idx):
+    def __getitem__(self,idx):
+        if(self.pack):
+            start = 0 if idx == 0 else self.stack_video_clips[idx-1]
+            end = self.stack_video_clips[idx]
+            frames = []
+            label = []
+            mask = []
+            for i in range(start,end):
+                try:
+                    result = self.get_dict(idx)
+                except:
+                    continue
+                else:
+                    frames.append(result["frames"])
+                    label.append(result["label"])
+                    mask.append(result["mask"])
+            return frames,label,mask,self.index
+        else:
+            result = self.get_dict(idx)
+            return result["frames"],result["label"],result["mask"],self.index
+
+    def get_dict(self,idx,block=False):
         while(True):
             try:
                 video_idx =  next(i for i,x in enumerate(self.stack_video_clips) if  idx < x)
@@ -790,7 +837,10 @@ class CDF(Dataset):
                 }
             except Exception as e:
                 logging.error(f"Error occur: {e}")
-                idx = random.randrange(0,len(self))
+                if(block):
+                    raise e
+                else:
+                    idx = random.randrange(0,len(self))
 
 class DFDC(Dataset):
     @staticmethod
@@ -802,7 +852,7 @@ class DFDC(Dataset):
         C.scale = 1.0
         return C
 
-    def __init__(self, config,num_frames,clip_duration, transform=None, accelerator=None, split="test",index=0,*args,**kwargs):
+    def __init__(self, config,num_frames,clip_duration, transform=None, accelerator=None, split="test",index=0,pack=False,*args,**kwargs):
         assert 0 <= config.scale <= 1
         assert split == "test", f"Split '{split.upper()}' Not Implemented."
 
@@ -813,6 +863,7 @@ class DFDC(Dataset):
         self.transform = transform
         self.index = index
         self.scale = config.scale
+        self.pack = pack
         # available clips per data
         self.video_list = []
 
@@ -876,7 +927,8 @@ class DFDC(Dataset):
             label = "REAL" if row["label"] == 0 else "FAKE"
             if name in self.video_table:
                 clips = int(self.video_table[name]["duration"]//self.clip_duration)
-                _videos.append((label, name, clips))
+                if(clips > 0):
+                    _videos.append((label, name, clips))
             else:
                 accelerator.print(f'Warning: video {path.join(self.root, label, "videos", name)} does not present in the processed dataset.')
         self.video_list += _videos[:int(self.scale * len(_videos))]
@@ -888,13 +940,33 @@ class DFDC(Dataset):
         self.stack_video_clips.pop(0)
 
     def __len__(self):
-        return self.stack_video_clips[-1]
+        if(self.pack):
+            return len(self.video_list)
+        else:
+            return self.stack_video_clips[-1]
     
     def __getitem__(self,idx):
-        result = self.get_dict(idx)
-        return result["frames"],result["label"],result["mask"],self.index
+        if(self.pack):
+            start = 0 if idx == 0 else self.stack_video_clips[idx-1]
+            end = self.stack_video_clips[idx]
+            frames = []
+            label = []
+            mask = []
+            for i in range(start,end):
+                try:
+                    result = self.get_dict(idx)
+                except:
+                    continue
+                else:
+                    frames.append(result["frames"])
+                    label.append(result["label"])
+                    mask.append(result["mask"])
+            return frames,label,mask,self.index
+        else:
+            result = self.get_dict(idx)
+            return result["frames"],result["label"],result["mask"],self.index
 
-    def get_dict(self,idx):
+    def get_dict(self,idx,block=False):
         while(True):
             try:
                 video_idx =  next(i for i,x in enumerate(self.stack_video_clips) if  idx < x)
@@ -951,7 +1023,10 @@ class DFDC(Dataset):
                 }
             except Exception as e:
                 logging.error(f"Error occur: {e}")
-                idx = random.randrange(0,len(self))
+                if(block):
+                    raise e
+                else:
+                    idx = random.randrange(0,len(self))
 
 
 
