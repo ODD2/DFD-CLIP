@@ -37,4 +37,8 @@ def cache_best_model(agent):
         agent.best_main_metric = main_metric
         agent.best_model_state = agent.accelerator.unwrap_model(agent.model).state_dict()
         agent.best_model_state = {k: v.cpu() for k, v in agent.best_model_state.items()}
+    
+    # update latest
+    agent.last_model_state = agent.accelerator.unwrap_model(agent.model).state_dict()
+    agent.last_model_state = {k: v.cpu() for k, v in agent.best_model_state.items()}
 

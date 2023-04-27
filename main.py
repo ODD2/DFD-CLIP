@@ -103,6 +103,8 @@ def register_trainer_callbacks(config, trainer, **kwargs):
     def save_model(trainer):
         trainer.accelerator.save(kwargs['evaluator'].best_model_state,
                                  os.path.join(trainer.accelerator.project_dir, 'best_weights.pt'))
+        trainer.accelerator.save(kwargs['evaluator'].last_model_state,
+                                 os.path.join(trainer.accelerator.project_dir, 'last_weights.pt'))
 
     # timer
     timer_events = ['training', 'epoch', 'batch']
