@@ -1,3 +1,4 @@
+import math
 import copy
 import torch
 from collections import defaultdict
@@ -140,7 +141,14 @@ class Trainer:
                 if(self.teaching):
                     self.accelerator.backward(sum([loss.mean() for loss in task_losses]))
                 else:
-                    self.accelerator.backward(task_losses[task_index].mean()+recon_loss+match_loss)
+                    _comp_inv_loss_pair = torch.cat((recon_loss.unsqueeze(0),match_loss.unsqueeze(0)))
+                    _comp_inv_loss_weight = _comp_inv_loss_pair.softmax(dim=-1)*0.6 + torch.tensor([0.2,0.2],device=_comp_inv_loss_pair.device)
+                    lr_rate = min(math.log(max(-self.steps + self.config.max_steps - 1499,1),self.config.max_steps),1)*0.9+0.1
+                    self.accelerator.backward(
+                        (
+                            task_losses[task_index].mean() + 10*lr_rate*(_comp_inv_loss_weight @ _comp_inv_loss_pair)
+                        )
+                    )
 
                 # cache output artifacts
                 self.batch_losses[name] = task_losses[task_index].detach()
