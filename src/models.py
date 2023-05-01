@@ -191,23 +191,55 @@ class Decoder(nn.Module):
         )
         self.ln_post = LayerNorm(width)
         self.projections  = []
+        self.comp_adpts = []
         for i,output_dim in enumerate(output_dims):
             _name = f"proj{i}x{output_dim}"
             setattr(self,_name, nn.Parameter(scale * torch.randn(width, output_dim)))
             self.projections.append(getattr(self,_name))
+        for i in range(len(detector.layer_indices)):
+            layer_adpt = {}
+            for j in ["k","v"]:
+                _name = f"comp_adpts_l{i}_{j}"
+                setattr(self,_name, nn.Parameter(torch.eye(width,width)))
+                layer_adpt[j] = getattr(self,_name)
+            self.comp_adpts.append(layer_adpt)
+
 
 
     def forward(self, kvs, m):
+        supplements = {}
+        
+        b,t,p,h,d = kvs[0]['k'].shape
         m = m.repeat_interleave(kvs[0]['k'].size(2), dim=-1)
-        kvs = [{k: (v + self.positional_embedding).flatten(1, 2) for k, v in kv.items()} for kv in kvs]
+        # perform compression invariant transformation, per layer per key has it's transform matrix
+        # record the before/after logits to for loss calculation
 
+        supplements["b_kvs"] = kvs
+
+        kvs = [
+            {
+                k: (v.view((b,t,p,-1))@self.comp_adpts[i][k]).view((b,t,p,h,d)) for k, v in kv.items()
+            }
+            for i,kv in enumerate(kvs)
+        ]
+
+        supplements["a_kvs"] = kvs
+        
+        kvs = [
+            {
+                k: (v + self.positional_embedding).flatten(1, 2) for k, v in kv.items()
+            }
+            for kv in kvs
+        ]
+        
         x = self.class_embedding.view(1, 1, -1).repeat(kvs[0]['k'].size(0), 1, 1)
         x = self.ln_pre(x)
         x = self.transformer(x, kvs, m)
         x = self.ln_post(x)
         x = x.squeeze(1)
         x = [x @ projection for projection in self.projections]
-        return x
+        # return not only the logits but also the before after kvs
+        return x, supplements
 
 
 def disable_gradients(module: nn.Module):
@@ -276,24 +308,51 @@ class Detector(nn.Module):
 
             kvs = [kvs[i] for i in self.layer_indices]
 
-        task_logits = self.decoder(kvs, m)
+        task_logits,supplements = self.decoder(kvs, m)
 
         for i in range(len(task_logits)):
             logits_l2_distance = torch.norm(task_logits[i],dim=-1,keepdim=True)
             task_logits[i] = 5 * task_logits[i] / (logits_l2_distance + 1e-10)
 
-        return task_logits
+        return task_logits,supplements
 
-    def forward(self, x, y, m,single_task,*args,**kargs):
+    def forward(self, x, y, m, comp=None, single_task=None, supple=False,*args,**kargs):
         
-        task_logits = self.predict(x, m)
+        task_logits,supplements = self.predict(x, m)
         
         task_losses = [
             loss_fn(logits, labels) if single_task==None or i == single_task else 0
             for i, loss_fn,logits,labels in zip(range(len(self.losses)),self.losses,task_logits,y)
         ]
+
+        if(supple):
+            recon_loss = 0
+            match_loss = 0
+            for i in range(len(y[0])//2):
+
+                if(comp[i] == "raw"):
+                    raw_sup = i*2
+                    c23_sup = i*2+1
+                else:
+                    raw_sup = i*2+1
+                    c23_sup = i*2
+                _l = len(supplements["b_kvs"])
+                _b,_t,_p,_h,_d =  supplements["b_kvs"][0]['k'].shape
+                
+                for layer in range(_l):
+                    for subject in ["k","v"]:
+                        recon_loss += torch.norm(
+                            supplements["b_kvs"][layer][subject][raw_sup] - 
+                            supplements["a_kvs"][layer][subject][raw_sup]
+                        )/(_l * _t * _p)
+                        match_loss += torch.norm(
+                            supplements["a_kvs"][layer][subject][raw_sup] - 
+                            supplements["a_kvs"][layer][subject][c23_sup]
+                        )/(_l * _t * _p)
         
-        return task_losses, task_logits
+            return task_losses, task_logits, recon_loss, match_loss
+        else:
+            return task_losses, task_logits
 
     def configure_optimizers(self, lr):
         return torch.optim.AdamW(params=self.decoder.parameters(), lr=lr)

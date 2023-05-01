@@ -20,6 +20,7 @@ data:
         - "DF"
         - "FS"
         - "F2F"
+      scale: 0.1
   eval:
     - name: Deepfake
       dataset: FFPP
@@ -30,15 +31,16 @@ data:
         - "NT"
 
 trainer:
-  batch_size: 10
+  batch_size: 4
   learning_rate: 0.0003
-  max_steps: 10000
+  max_steps: 3000
   num_workers: 8
   metrics:
     - name: Deepfake
       types:
         - accuracy
         - roc_auc
+
 
 evaluator:
   batch_size: 8

@@ -62,7 +62,8 @@ class Trainer:
                     dataset,
                     shuffle=True,
                     batch_size=config.batch_size,
-                    num_workers=config.num_workers
+                    num_workers=config.num_workers,
+                    collate_fn=dataset.collate_fn
                 )
             )
 
@@ -127,9 +128,10 @@ class Trainer:
 
                 
                 # forward and calculate the loss
-                task_losses, task_logits = self.model(
-                    *batch[:3],
-                    single_task=(task_index if not self.teaching else None)
+                task_losses, task_logits, recon_loss, match_loss = self.model(
+                    *batch[:4],
+                    single_task=(task_index if not self.teaching else None),
+                    supple=True
                 )
 
                 # backprop and update the parameters
@@ -138,12 +140,14 @@ class Trainer:
                 if(self.teaching):
                     self.accelerator.backward(sum([loss.mean() for loss in task_losses]))
                 else:
-                    self.accelerator.backward(task_losses[task_index].mean())
+                    self.accelerator.backward(task_losses[task_index].mean()+recon_loss+match_loss)
 
                 # cache output artifacts
                 self.batch_losses[name] = task_losses[task_index].detach()
                 self.batch_logits[name] = task_logits[task_index].detach()
                 self.batch_labels[name] = batch[1][task_index].detach()
+                self.batch_losses["recon"] = recon_loss.detach()
+                self.batch_losses["match"] = match_loss.detach()
             
             self.optimizer.step()
             self.lr_scheduler.step()

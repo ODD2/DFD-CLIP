@@ -200,6 +200,7 @@ def main(params):
         transform=model.transform,
         accelerator=accelerator,
         split='train',
+        pair=True,
         index=i
     ) for i,cfg in enumerate(config.data.train)
     ]

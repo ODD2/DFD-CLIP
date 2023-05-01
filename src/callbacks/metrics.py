@@ -76,8 +76,6 @@ def init_metrics(agent):
     }
     # agent.roc_auc_calc = evaluate.load("roc_auc")
     agent.losses = {
-        name: []
-        for name in agent.calcs.keys()
     }
 
 
@@ -107,6 +105,8 @@ def update_metrics(agent):
                 labels=labels.to(torch.float32)
             )
     for name,loss in batch_losses.items():
+        if not name in agent.losses:
+            agent.losses[name] = []
         agent.losses[name].append(loss.mean().item())
 
 
@@ -117,8 +117,9 @@ def compute_metrics(agent):
     agent.compute_losses = {}
     agent.compute_metrics = {}
     for lname in agent.losses.keys():
-        for mname,metric  in agent.calcs[lname].items():
-            agent.compute_metrics[f"metric/{lname}/{mname}"] = metric.compute()[mname]
+        if lname in agent.calcs:
+            for mname,metric  in agent.calcs[lname].items():
+                agent.compute_metrics[f"metric/{lname}/{mname}"] = metric.compute()[mname]
         
         agent.compute_losses[f"loss/{lname}"] = sum(agent.losses[lname]) / len(agent.losses[lname])
         agent.losses[lname].clear()

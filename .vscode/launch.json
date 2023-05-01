@@ -11,7 +11,7 @@
             "module": "main",
             "args": [
                 "--cfg",
-                "configs/mix_mt_test.yaml",
+                "configs/deepfake/deepfake.yaml",
                 "--test"
             ],
             "justMyCode": false

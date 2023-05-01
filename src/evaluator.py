@@ -26,7 +26,8 @@ class Evaluator:
                 DataLoader(
                     dataset,
                     batch_size=config.batch_size,
-                    num_workers=config.num_workers
+                    num_workers=config.num_workers,
+                    collate_fn=dataset.collate_fn
                 )
             )
         

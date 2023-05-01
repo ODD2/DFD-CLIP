@@ -181,7 +181,7 @@ class FFPP(Dataset):
         C.scale = 1.0
         return C
 
-    def __init__(self, config,num_frames,clip_duration, transform=None, accelerator=None, split='train',index=0,pack=False):
+    def __init__(self, config,num_frames,clip_duration, transform=None, accelerator=None, split='train',index=0,pack=False,pair=False):
         assert 0 <= config.scale <= 1
         self.TYPE_DIRS = {
             'REAL': 'real/',
@@ -205,6 +205,7 @@ class FFPP(Dataset):
         self.index = index
         self.scale = config.scale
         self.pack = pack
+        self.pair = pair
         # available clips per data
         self.video_list = []
 
@@ -322,44 +323,60 @@ class FFPP(Dataset):
                 logging.debug(f"Item DF/COMP:{df_type}/{comp}")
 
                 # video frame processing
-                frames = []
-                vid_reader = torchvision.io.VideoReader(
-                    video_meta["path"], 
-                    "video"
-                )
-                # - frames per second
-                video_sample_freq = vid_reader.get_metadata()["video"]["fps"][0]
-                # - the amount of frames to skip
-                video_sample_offset = int(video_offset_duration)
-                # - the amount of frames for the duration of a clip
-                video_clip_samples = int(video_sample_freq * self.clip_duration)
-                # - the amount of frames to skip in order to meet the num_frames per clip.(excluding the head & tail frames )
-                video_sample_stride = ((video_clip_samples-1) / (self.num_frames - 1))/video_sample_freq
-                logging.debug(f"Loading Video: {video_meta['path']}")
-                logging.debug(f"Sample Offset: {video_sample_offset}")
-                logging.debug(f"Sample Stride: {video_sample_stride}")
-                # - fetch frames of clip duration
-                for sample_idx in range(self.num_frames):
-                    try:
-                        vid_reader.seek(video_sample_offset + sample_idx * video_sample_stride)
-                        frame = next(vid_reader)
-                        frames.append(frame["data"])
-                    except Exception as e:
-                        raise Exception(f"unable to read video frame of sample index:{sample_idx}")
-                frames = torch.stack(frames)
-                del vid_reader
+                frames = {}
+                for target_comp in ["raw","c23"]:
+                    _frames = []
 
-                # transformation
-                if (self.transform):
-                    frames = self.transform(frames)
+                    vid_path = video_meta["path"]
+
+                    if not target_comp in vid_path:
+                        if not self.pair:
+                            continue
+                        else:
+                            vid_path = vid_path.replace(comp,target_comp)
+                    
+                    
+                    vid_reader = torchvision.io.VideoReader(
+                        vid_path, 
+                        "video"
+                    )
+                    # - frames per second
+                    video_sample_freq = vid_reader.get_metadata()["video"]["fps"][0]
+                    # - the amount of frames to skip
+                    video_sample_offset = int(video_offset_duration)
+                    # - the amount of frames for the duration of a clip
+                    video_clip_samples = int(video_sample_freq * self.clip_duration)
+                    # - the amount of frames to skip in order to meet the num_frames per clip.(excluding the head & tail frames )
+                    video_sample_stride = ((video_clip_samples-1) / (self.num_frames - 1))/video_sample_freq
+                    logging.debug(f"Loading Video: {video_meta['path']}")
+                    logging.debug(f"Sample Offset: {video_sample_offset}")
+                    logging.debug(f"Sample Stride: {video_sample_stride}")
+                    # - fetch frames of clip duration
+                    for sample_idx in range(self.num_frames):
+                        try:
+                            vid_reader.seek(video_sample_offset + sample_idx * video_sample_stride)
+                            frame = next(vid_reader)
+                            _frames.append(frame["data"])
+                        except Exception as e:
+                            raise Exception(f"unable to read video frame of sample index:{sample_idx}")
+                    _frames = torch.stack(_frames)
+                    del vid_reader
+
+                    # transformation
+                    if (self.transform):
+                        _frames = self.transform(_frames)
+                    
+                    frames[target_comp] = _frames
 
                 # padding and masking missing frames.
-                mask = torch.tensor([1.] * len(frames) +
-                                    [0.] * (self.num_frames - len(frames)), dtype=torch.bool)
-                if len(frames) < self.num_frames:
-                    diff = self.num_frames - len(frames)
-                    padding = torch.zeros((diff, *frames.shape[1:]),dtype=torch.uint8)
-                    frames = torch.concatenate((frames, padding))
+                mask = torch.tensor([1.] * len(frames[comp]) +
+                                    [0.] * (self.num_frames - len(frames[comp])), dtype=torch.bool)
+                
+                for target_comp in ["raw","c23"]:
+                    if target_comp in frames and len(frames[target_comp]) < self.num_frames:
+                        diff = self.num_frames - len(frames[target_comp])
+                        padding = torch.zeros((diff, *frames[target_comp].shape[1:]),dtype=torch.uint8)
+                        frames[target_comp] = torch.concatenate((frames[target_comp], padding))
                 
                 return {
                     "frames":frames,
@@ -372,6 +389,25 @@ class FFPP(Dataset):
                     raise e
                 else:
                     idx = random.randrange(0,len(self))
+
+    @staticmethod
+    def collate_fn(batch):
+        _frames,_label,_mask,_index = list(zip(*batch))
+        _comps = list(_frames[0].keys())
+        num_vids = len(_frames)
+        num_comps = len(_comps)
+        frames = []
+        
+        for _frame in _frames:
+            for comp in _comps:
+                frames.append(_frame[comp])
+        
+        frames = torch.stack(frames)
+        label = torch.tensor(_label).repeat_interleave(num_comps,dim=0)
+        mask = torch.stack(_mask).repeat_interleave(num_comps,dim=0)
+        index = torch.tensor(_index).repeat_interleave(num_comps,dim=0)
+        comps = _comps*num_vids
+        return [frames,label,mask,comps,index]
 
 class RPPG(Dataset):
     @staticmethod
