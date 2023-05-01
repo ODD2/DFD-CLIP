@@ -200,7 +200,12 @@ class Decoder(nn.Module):
             layer_adpt = {}
             for j in ["k","v"]:
                 _name = f"comp_adpts_l{i}_{j}"
-                setattr(self,_name, nn.Parameter(torch.eye(width,width)))
+                setattr(self,_name, torch.nn.Sequential(
+                    torch.nn.Linear(width,width//3),
+                    torch.nn.GELU(),
+                    torch.nn.LayerNorm(width//3),
+                    torch.nn.Linear(width//3,width)
+                ) )
                 layer_adpt[j] = getattr(self,_name)
             self.comp_adpts.append(layer_adpt)
 
@@ -218,7 +223,7 @@ class Decoder(nn.Module):
 
         kvs = [
             {
-                k: (v.view((b,t,p,-1))@self.comp_adpts[i][k]).view((b,t,p,h,d)) for k, v in kv.items()
+                k: (self.comp_adpts[i][k](v.view((b,t,p,-1)))).view((b,t,p,h,d)) for k, v in kv.items()
             }
             for i,kv in enumerate(kvs)
         ]
@@ -338,7 +343,8 @@ class Detector(nn.Module):
                     c23_sup = i*2
                 _l = len(supplements["b_kvs"])
                 _b,_t,_p,_h,_d =  supplements["b_kvs"][0]['k'].shape
-                
+                recon_loss = 0
+                match_loss = 0 
                 for layer in range(_l):
                     for subject in ["k","v"]:
                         recon_loss += torch.norm(

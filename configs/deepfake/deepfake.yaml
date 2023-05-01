@@ -20,7 +20,6 @@ data:
         - "DF"
         - "FS"
         - "F2F"
-      scale: 0.1
   eval:
     - name: Deepfake
       dataset: FFPP
