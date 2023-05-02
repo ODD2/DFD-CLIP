@@ -331,8 +331,11 @@ class Detector(nn.Module):
         ]
 
         if(supple):
-            recon_loss = 0
-            match_loss = 0
+            _l = len(supplements["b_kvs"])
+            _b,_t,_p,_h,_d =  supplements["b_kvs"][0]['k'].shape 
+            device = supplements["b_kvs"][0]['k'].device
+            recon_loss = torch.tensor(0.0,device=device)
+            match_loss = torch.tensor(0.0,device=device)
             for i in range(len(y[0])//2):
 
                 if(comp[i*2] == "raw"):
@@ -341,10 +344,7 @@ class Detector(nn.Module):
                 else:
                     raw_sup = i*2+1
                     c23_sup = i*2
-                _l = len(supplements["b_kvs"])
-                _b,_t,_p,_h,_d =  supplements["b_kvs"][0]['k'].shape
-                recon_loss = 0
-                match_loss = 0 
+
                 for layer in range(_l):
                     for subject in ["k","v"]:
                         recon_loss += torch.norm(
@@ -355,7 +355,7 @@ class Detector(nn.Module):
                             supplements["a_kvs"][layer][subject][raw_sup] - 
                             supplements["a_kvs"][layer][subject][c23_sup]
                         )/(_l * _t * _p)
-        
+
             return task_losses, task_logits, recon_loss, match_loss
         else:
             return task_losses, task_logits
