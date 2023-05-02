@@ -144,8 +144,9 @@ class Trainer:
                     _comp_inv_loss_pair = torch.cat((recon_loss.unsqueeze(0),match_loss.unsqueeze(0)))
                     # _comp_inv_loss_weight = _comp_inv_loss_pair.softmax(dim=-1)*0.6 + torch.tensor([0.2,0.2],device=_comp_inv_loss_pair.device)
                     _comp_inv_loss_weight = torch.tensor([1.0, 1.0],device=_comp_inv_loss_pair.device)
-                    _comp_inv_end_step = 2000
-                    _comp_inv_weight = 4*(min(math.log(max(-self.steps + _comp_inv_end_step,1),_comp_inv_end_step),1)*0.75+0.25)
+                    # _comp_inv_end_step = 2000
+                    # _comp_inv_weight = 4*(min(math.log(max(-self.steps + _comp_inv_end_step,1),_comp_inv_end_step),1)*0.75+0.25)
+                    _comp_inv_weight = 1
                     self.accelerator.backward(
                         (
                             task_losses[task_index].mean() + _comp_inv_weight*(_comp_inv_loss_weight @ _comp_inv_loss_pair)
