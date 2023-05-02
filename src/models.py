@@ -201,10 +201,10 @@ class Decoder(nn.Module):
             for j in ["k","v"]:
                 _name = f"comp_adpts_l{i}_{j}"
                 setattr(self,_name, torch.nn.Sequential(
-                    torch.nn.Linear(width,width//3),
+                    torch.nn.Linear(width,width//3,bias=False),
                     torch.nn.GELU(),
                     torch.nn.LayerNorm(width//3),
-                    torch.nn.Linear(width//3,width)
+                    torch.nn.Linear(width//3,width,bias=False)
                 ) )
                 layer_adpt[j] = getattr(self,_name)
             self.comp_adpts.append(layer_adpt)
