@@ -335,7 +335,7 @@ class Detector(nn.Module):
             match_loss = 0
             for i in range(len(y[0])//2):
 
-                if(comp[i] == "raw"):
+                if(comp[i*2] == "raw"):
                     raw_sup = i*2
                     c23_sup = i*2+1
                 else:
