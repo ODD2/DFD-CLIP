@@ -252,6 +252,7 @@ class Detector(nn.Module):
     @staticmethod
     def get_default_config():
         C = CN()
+        C.name = "Detector"
         C.architecture = 'ViT-B/16'
         C.decode_mode = "stride"
         C.decode_stride = 2
@@ -287,7 +288,6 @@ class Detector(nn.Module):
         self.adapter = CompInvAdapter(self)
         self.transform = self._transform(self.encoder.input_resolution)
         
-
     def predict(self, x, m):
         b, t, c, h, w = x.shape
         supplements = {}
@@ -349,7 +349,10 @@ class Detector(nn.Module):
             return task_losses, task_logits
 
     def configure_optimizers(self, lr):
-        return torch.optim.AdamW(params=self.decoder.parameters(), lr=lr)
+        return torch.optim.AdamW(
+            params=list(self.adapter.parameters())+list(self.decoder.parameters()), 
+            lr=lr
+        )
 
     def _transform(self, n_px):
         """
@@ -367,6 +370,7 @@ class Detector(nn.Module):
 
 class CompInvAdapter(nn.Module):
     def __init__(self,detector):
+        super().__init__()
         width = detector.encoder.width
         self.layer_blocks=[]
         for i in range(len(detector.layer_indices)):
@@ -388,9 +392,7 @@ class CompInvAdapter(nn.Module):
 
     def forward(self, kvs):
         b,t,p,h,d = kvs[0]['k'].shape
-        m = m.repeat_interleave(kvs[0]['k'].size(2), dim=-1)
         # perform compression invariant transformation, per layer per key has it's transform matrix
-
         kvs = [
             {
                 k: (self.layer_blocks[i][k](v.view((b,t,p,-1)))).view((b,t,p,h,d)) for k, v in kv.items()
@@ -399,3 +401,116 @@ class CompInvAdapter(nn.Module):
         ]
 
         return kvs
+
+
+class CompInvEncoder(nn.Module):
+    """
+    Deepfake video detector (also a video classifier)
+
+    A series of video frames are first fed into CLIP image encoder
+    we export key and values for each frame in each layer of CLIP ViT
+    these k, v then further flatten on the temporal dimension
+    resulting in a series of tokens for each video.
+
+    The decoder aggregates the exported key and values in an attention manner 
+    a CLS query token is learned during decoding.
+    """
+    @staticmethod
+    def get_default_config():
+        C = CN()
+        C.name = "CompInvEncoder"
+        C.architecture = 'ViT-B/16'
+        C.decode_mode = "stride"
+        C.decode_stride = 2
+        C.decode_indices = []
+        C.dropout = 0.0
+        return C
+
+    def __init__(self, config, accelerator,*args,**kargs):
+        super().__init__()
+        assert config.decode_mode in ["stride","index"]
+
+        with accelerator.main_process_first():
+            self.encoder = disable_gradients(clip.load(config.architecture)[0].visual.float())
+
+        self.decode_mode = config.decode_mode
+        
+        if(self.decode_mode == "stride"):
+            self.layer_indices = list(range(0,len(self.encoder.transformer.resblocks),config.decode_stride))
+        elif(self.decode_mode == "index"):
+            self.layer_indices = config.decode_indices
+        else:
+            raise Exception(f"Unknown decode type: {self.decode_type}")
+
+        self.adapter = CompInvAdapter(self)
+        self.transform = self._transform(self.encoder.input_resolution)
+        
+    def predict(self, x):
+        b, t, c, h, w = x.shape
+        with torch.no_grad():
+            # get key and value from each CLIP ViT layer
+            _kvs = self.encoder(x.flatten(0, 1))
+            # discard original CLS token and restore temporal dimension
+            _kvs = [{k: v[:, 1:].unflatten(0, (b, t)) for k, v in kv.items()} for kv in _kvs]
+            _kvs = [_kvs[i] for i in self.layer_indices]
+
+        kvs = self.adapter(_kvs)
+
+        return kvs,_kvs
+
+    def forward(self, x, comp,*args,**kargs):
+        
+        kvs,_kvs = self.predict(x)
+
+        _l = len(self.layer_indices)
+
+        _b,_t,_p,_h,_d =  kvs[0]['k'].shape 
+
+        _w = _b//2
+
+        device = kvs[0]['k'].device
+        
+        recon_loss = torch.tensor(0.0,device=device)
+        match_loss = torch.tensor(0.0,device=device)
+
+        recon_diff = torch.zeros((_t,_p,_h,_d),device=device)
+        match_diff = torch.zeros((_t,_p,_h,_d),device=device)
+        
+        for i in range(_w):
+
+            if(comp[i*2] == "raw"):
+                raw_sup = i*2
+                c23_sup = i*2+1
+            else:
+                raw_sup = i*2+1
+                c23_sup = i*2
+
+            for layer in range(_l):
+                for subject in ["k","v"]:
+                    recon_diff += torch.abs(_kvs[layer][subject][raw_sup] - kvs[layer][subject][raw_sup])
+                    match_diff += torch.abs(kvs[layer][subject][raw_sup] - kvs[layer][subject][c23_sup])
+    
+        recon_loss = torch.norm((recon_diff/(_w * _l *  2)).view((_p,_t,-1)).mean(dim=1))/_p
+        match_loss = torch.norm((match_diff/(_w * _l *  2)).view((_p,_t,-1)).mean(dim=1))/_p
+
+        return recon_loss, match_loss
+
+    def configure_optimizers(self, lr):
+        return torch.optim.AdamW(
+            params=self.adapter.parameters(), 
+            lr=lr
+        )
+
+    def _transform(self, n_px):
+        """
+        Ported from:
+        https://github.com/openai/CLIP/blob/d50d76daa670286dd6cacf3bcd80b5e4823fc8e1/clip/clip.py#L79
+        """
+        return T.Compose([
+            T.Resize(n_px, interpolation=T.InterpolationMode.BICUBIC),
+            T.CenterCrop(n_px),
+            T.ConvertImageDtype(torch.float32),
+            T.Normalize((0.48145466, 0.4578275, 0.40821073),
+                        (0.26862954, 0.26130258, 0.27577711)),
+        ])
+

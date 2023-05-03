@@ -1,0 +1,47 @@
+tracking:
+  enabled: true
+  project_name: comp-inv
+  directory: logs/comp-inv
+
+model:
+  name: CompInvEncoder
+
+data:
+  num_frames: 50
+  train:
+    - name: Deepfake
+      dataset: FFPP
+      compressions: 
+        - "c23"
+      types:
+        - "REAL"
+        - "DF"
+        - "FS"
+        - "F2F"
+  eval:
+    - name: Deepfake
+      dataset: FFPP
+      compressions: 
+        - "c23"
+      types:
+        - "REAL"
+        - "NT"
+
+trainer:
+  name: CompInvTrainer
+  batch_size: 4
+  learning_rate: 0.0003
+  max_steps: 50
+  num_workers: 8
+
+
+evaluator:
+  name: CompInvEvaluator
+  batch_size: 6
+  num_workers: 8
+
+system:
+  deterministic_training: true
+  training_eval_interval: 5
+  evaluation_interval: 10
+

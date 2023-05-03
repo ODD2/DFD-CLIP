@@ -11,7 +11,7 @@
             "module": "main",
             "args": [
                 "--cfg",
-                "configs/deepfake/deepfake.yaml",
+                "configs/comp-inv-encoder/deepfake.yaml",
                 "--test"
             ],
             "justMyCode": false
@@ -40,7 +40,6 @@
                 "/home/od/Desktop/repos/dfd-clip/logs/multi_evidence/mix/ff(c23)+rppg(c23v2)-loo(NT)-l2sm-3000b-180cls-kl_div-mt-ema_95",
                 "--test"
             ],
-
             "justMyCode": false
         },
     ]

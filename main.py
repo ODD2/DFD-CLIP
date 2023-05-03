@@ -11,10 +11,10 @@ import torch
 from accelerate import Accelerator,DistributedDataParallelKwargs
 from yacs.config import CfgNode as CN
 
-from src.models import Detector
+from src.models import Detector,CompInvEncoder
 from src.datasets import RPPG,FFPP
-from src.trainer import Trainer
-from src.evaluator import Evaluator
+from src.trainer import Trainer,CompInvTrainer
+from src.evaluator import Evaluator,CompInvEvaluator
 from src.callbacks.timer import start_timer, end_timer
 from src.callbacks.metrics import init_metrics, update_metrics, compute_metrics
 from src.callbacks.tracking import update_trackers, add_main_metric, cache_best_model
@@ -42,13 +42,13 @@ def get_config(params):
     C.tracking.compare_fn = 'max' # max | min
 
     # model
-    C.model = Detector.get_default_config()
-
+    C.model = CN(new_allowed=True)
+    
     # trainer
-    C.trainer = Trainer.get_default_config()
+    C.trainer = CN(new_allowed=True)
 
     # evaluator
-    C.evaluator = Evaluator.get_default_config()
+    C.evaluator = CN(new_allowed=True)
 
     # data
     C.data = CN()
@@ -60,6 +60,15 @@ def get_config(params):
     # load additional configs from file
     if config_file is not None:
         C.merge_from_file(config_file)
+
+        # model
+        C.model = globals()[C.model.name].get_default_config().merge_from_other_cfg(C.model)
+
+        # trainer
+        C.trainer = globals()[C.trainer.name].get_default_config().merge_from_other_cfg(C.trainer)
+
+        # evaluator
+        C.evaluator = globals()[C.evaluator.name].get_default_config().merge_from_other_cfg(C.evaluator)
         
         # train dataset
         C.data.train = [
@@ -70,6 +79,7 @@ def get_config(params):
             )
             for d_train in C.data.train
         ]
+
         # eval datasets
         C.data.eval = [
             (
@@ -101,10 +111,12 @@ def register_trainer_callbacks(config, trainer, **kwargs):
         kwargs['evaluator'].run(trainer)
 
     def save_model(trainer):
-        trainer.accelerator.save(kwargs['evaluator'].best_model_state,
-                                 os.path.join(trainer.accelerator.project_dir, 'best_weights.pt'))
-        trainer.accelerator.save(kwargs['evaluator'].last_model_state,
-                                 os.path.join(trainer.accelerator.project_dir, 'last_weights.pt'))
+        if kwargs['evaluator'].best_model_state:
+            trainer.accelerator.save(kwargs['evaluator'].best_model_state,
+                                    os.path.join(trainer.accelerator.project_dir, 'best_weights.pt'))
+        if kwargs['evaluator'].last_model_state:
+            trainer.accelerator.save(kwargs['evaluator'].last_model_state,
+                                    os.path.join(trainer.accelerator.project_dir, 'last_weights.pt'))
 
     # timer
     timer_events = ['training', 'epoch', 'batch']
@@ -163,7 +175,7 @@ def register_evaluator_callbacks(config, evaluator, **kwargs):
                                                       main_metric=config.tracking.main_metric,
                                                       compare_fn=config.tracking.compare_fn,
                                                       current_main_metrics=[])
-        evaluator.add_callback('on_evaluation_end', cache_best_model)
+        evaluator.add_callback('on_evaluation_end', cache_best_model, best_model_state=None, last_model_state=None)
 
     # stdout logger
     evaluator.add_callback('on_batch_end',
@@ -189,21 +201,22 @@ def main(params):
         set_seed(config.system.seed)
 
     # initialize model
-    model = Detector(config.model, config.data.num_frames, accelerator)
+    model =  globals()[config.model.name](config.model, accelerator=accelerator,num_frames=config.data.num_frames, )
 
     # initialize datasets
     train_datasets = [
         globals()[cfg.dataset](
-        cfg,
-        config.data.num_frames,
-        config.data.clip_duration,
-        transform=model.transform,
-        accelerator=accelerator,
-        split='train',
-        pair=True,
-        index=i
-    ) for i,cfg in enumerate(config.data.train)
+            cfg,
+            config.data.num_frames,
+            config.data.clip_duration,
+            transform=model.transform,
+            accelerator=accelerator,
+            split='train',
+            pair=True,
+            index=i
+        ) for i,cfg in enumerate(config.data.train)
     ]
+
     for dataset in train_datasets:
         accelerator.print(f'Training Dataset {dataset.name} initialized with {len(dataset)} samples\n')
 
@@ -215,6 +228,7 @@ def main(params):
             model.transform,
             accelerator=accelerator,
             split='val',
+            pair=True,
             index=i
         )  for i,cfg in enumerate(config.data.eval)
     ]
@@ -222,8 +236,8 @@ def main(params):
         accelerator.print(f'Evaluation Dataset {dataset.name} initialized with {len(dataset)} samples\n')
 
     # initialize trainer and evaluator
-    trainer = Trainer(config.trainer, accelerator, model, train_datasets)
-    evaluator = Evaluator(config.evaluator, accelerator, eval_datasets)
+    trainer = globals()[config.trainer.name](config.trainer, accelerator, model, train_datasets)
+    evaluator =  globals()[config.evaluator.name](config.evaluator, accelerator, eval_datasets)
 
     # register callbacks
     register_trainer_callbacks(config, trainer, evaluator=evaluator)
