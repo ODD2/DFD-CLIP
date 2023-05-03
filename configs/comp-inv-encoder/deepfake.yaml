@@ -18,6 +18,7 @@ data:
         - "DF"
         - "FS"
         - "F2F"
+      pair: 1
   eval:
     - name: Deepfake
       dataset: FFPP
@@ -26,6 +27,7 @@ data:
       types:
         - "REAL"
         - "NT"
+      pair: 1
 
 trainer:
   name: CompInvTrainer

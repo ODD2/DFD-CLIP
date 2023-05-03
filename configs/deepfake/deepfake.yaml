@@ -4,10 +4,14 @@ tracking:
   directory: logs/deepfake
 
 model:
+  name: Detector
   out_dim: 
     - 2
   losses:
     - auc_roc
+  adapter:
+    type: pretrain
+    path: /home/od/Desktop/repos/dfd-clip/logs/comp-inv/comp-inv/0503T1230/last_weights.pt
 
 data:
   train:
@@ -30,7 +34,8 @@ data:
         - "NT"
 
 trainer:
-  batch_size: 4
+  name: Trainer
+  batch_size: 10
   learning_rate: 0.0003
   max_steps: 3000
   num_workers: 8
@@ -42,7 +47,8 @@ trainer:
 
 
 evaluator:
-  batch_size: 8
+  name: Evaluator
+  batch_size: 10
   num_workers: 8
   metrics:
     - name: Deepfake

@@ -179,9 +179,11 @@ class FFPP(Dataset):
         C.compressions = ['raw']
         C.dataset = "FFPP"
         C.scale = 1.0
+        C.pack = 0
+        C.pair = 0
         return C
 
-    def __init__(self, config,num_frames,clip_duration, transform=None, accelerator=None, split='train',index=0,pack=False,pair=False):
+    def __init__(self, config,num_frames,clip_duration, transform=None, accelerator=None, split='train',index=0):
         assert 0 <= config.scale <= 1
         self.TYPE_DIRS = {
             'REAL': 'real/',
@@ -204,8 +206,8 @@ class FFPP(Dataset):
         self.transform = transform
         self.index = index
         self.scale = config.scale
-        self.pack = pack
-        self.pair = pair
+        self.pack = bool(config.pack)
+        self.pair = bool(config.pair)
         # available clips per data
         self.video_list = []
 
@@ -407,6 +409,7 @@ class FFPP(Dataset):
         mask = torch.stack(_mask).repeat_interleave(num_comps,dim=0)
         index = torch.tensor(_index).repeat_interleave(num_comps,dim=0)
         comps = _comps*num_vids
+        
         return [frames,label,mask,comps,index]
 
 class RPPG(Dataset):

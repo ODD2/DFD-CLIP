@@ -191,25 +191,11 @@ class Decoder(nn.Module):
         )
         self.ln_post = LayerNorm(width)
         self.projections  = []
-        self.comp_adpts = []
+
         for i,output_dim in enumerate(output_dims):
             _name = f"proj{i}x{output_dim}"
             setattr(self,_name, nn.Parameter(scale * torch.randn(width, output_dim)))
             self.projections.append(getattr(self,_name))
-        for i in range(len(detector.layer_indices)):
-            layer_adpt = {}
-            for j in ["k","v"]:
-                _name = f"comp_adpts_l{i}_{j}"
-                setattr(self,_name, torch.nn.Sequential(
-                    torch.nn.Linear(width,width//3,bias=False),
-                    torch.nn.GELU(),
-                    torch.nn.LayerNorm(width//3),
-                    torch.nn.Linear(width//3,width,bias=False)
-                ) )
-                layer_adpt[j] = getattr(self,_name)
-            self.comp_adpts.append(layer_adpt)
-
-
 
     def forward(self, kvs, m):
         m = m.repeat_interleave(kvs[0]['k'].size(2), dim=-1)
@@ -227,7 +213,7 @@ class Decoder(nn.Module):
         x = self.ln_post(x)
         x = x.squeeze(1)
         x = [x @ projection for projection in self.projections]
-        # return not only the logits but also the before after kvs
+
         return x
 
 
@@ -257,6 +243,8 @@ class Detector(nn.Module):
         C.decode_mode = "stride"
         C.decode_stride = 2
         C.decode_indices = []
+        C.adapter = CN(new_allowed=True)
+        C.adapter.type = "none"
         C.dropout = 0.0
         C.out_dim = []
         C.losses = []
@@ -282,15 +270,25 @@ class Detector(nn.Module):
             self.layer_indices = config.decode_indices
         else:
             raise Exception(f"Unknown decode type: {self.decode_type}")
-
-
+        
         self.decoder = Decoder(self, config, num_frames)
-        self.adapter = CompInvAdapter(self)
+        
+        if(config.adapter.type == "none"):
+            self.adapter = None
+        else:
+            self.adapter = CompInvAdapter(self)
+            if(config.adapter.type == "pretrain"):
+                data = torch.load(config.adapter.path)
+                data = {
+                    '.'.join(k.split('.')[1:]): v  for k,v in  data.items() if "adapter"  in k
+                }
+                self.adapter.load_state_dict(data)
+                self.adapter = disable_gradients(self.adapter)
+            
         self.transform = self._transform(self.encoder.input_resolution)
         
     def predict(self, x, m):
         b, t, c, h, w = x.shape
-        supplements = {}
         with torch.no_grad():
             # get key and value from each CLIP ViT layer
             kvs = self.encoder(x.flatten(0, 1))
@@ -298,59 +296,32 @@ class Detector(nn.Module):
             kvs = [{k: v[:, 1:].unflatten(0, (b, t)) for k, v in kv.items()} for kv in kvs]
 
             kvs = [kvs[i] for i in self.layer_indices]
-        supplements["b_kvs"] = kvs
-        kvs = self.adapter(kvs)
-        supplements["a_kvs"] = kvs
+
+        if self.adapter:
+            kvs = self.adapter(kvs)
+
         task_logits = self.decoder(kvs, m)
 
         for i in range(len(task_logits)):
             logits_l2_distance = torch.norm(task_logits[i],dim=-1,keepdim=True)
             task_logits[i] = 5 * task_logits[i] / (logits_l2_distance + 1e-10)
 
-        return task_logits,supplements
+        return task_logits
 
-    def forward(self, x, y, m, comp=None, single_task=None, supple=False,*args,**kargs):
+    def forward(self, x, y, m, single_task=None,*args,**kargs):
         
-        task_logits,supplements = self.predict(x, m)
+        task_logits = self.predict(x, m)
         
         task_losses = [
             loss_fn(logits, labels) if single_task==None or i == single_task else 0
             for i, loss_fn,logits,labels in zip(range(len(self.losses)),self.losses,task_logits,y)
         ]
 
-        if(supple):
-            _l = len(supplements["b_kvs"])
-            _b,_t,_p,_h,_d =  supplements["b_kvs"][0]['k'].shape 
-            device = supplements["b_kvs"][0]['k'].device
-            recon_loss = torch.tensor(0.0,device=device)
-            match_loss = torch.tensor(0.0,device=device)
-            for i in range(len(y[0])//2):
-
-                if(comp[i*2] == "raw"):
-                    raw_sup = i*2
-                    c23_sup = i*2+1
-                else:
-                    raw_sup = i*2+1
-                    c23_sup = i*2
-
-                for layer in range(_l):
-                    for subject in ["k","v"]:
-                        recon_loss += torch.norm(
-                            supplements["b_kvs"][layer][subject][raw_sup] - 
-                            supplements["a_kvs"][layer][subject][raw_sup]
-                        )/(_b * _l * _t * _p)
-                        match_loss += torch.norm(
-                            supplements["a_kvs"][layer][subject][raw_sup] - 
-                            supplements["a_kvs"][layer][subject][c23_sup]
-                        )/(_b * _l * _t * _p)
-
-            return task_losses, task_logits, recon_loss, match_loss
-        else:
-            return task_losses, task_logits
+        return task_losses, task_logits
 
     def configure_optimizers(self, lr):
         return torch.optim.AdamW(
-            params=list(self.adapter.parameters())+list(self.decoder.parameters()), 
+            params=list(self.decoder.parameters()), 
             lr=lr
         )
 

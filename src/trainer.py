@@ -132,10 +132,9 @@ class Trainer(_Trainer):
 
                 
                 # forward and calculate the loss
-                task_losses, task_logits, recon_loss, match_loss = self.model(
-                    *batch[:4],
-                    single_task=(task_index if not self.teaching else None),
-                    supple=True
+                task_losses, task_logits = self.model(
+                    *batch[:3],
+                    single_task=(task_index if not self.teaching else None)
                 )
 
                 # backprop and update the parameters
@@ -144,26 +143,12 @@ class Trainer(_Trainer):
                 if(self.teaching):
                     self.accelerator.backward(sum([loss.mean() for loss in task_losses]))
                 else:
-                    _comp_inv_loss_pair = torch.cat((recon_loss.unsqueeze(0),match_loss.unsqueeze(0)))
-                    # _comp_inv_loss_weight = _comp_inv_loss_pair.softmax(dim=-1)*0.6 + torch.tensor([0.2,0.2],device=_comp_inv_loss_pair.device)
-                    _comp_inv_loss_weight = torch.tensor([1.0, 1.0],device=_comp_inv_loss_pair.device)
-                    _comp_inv_end_step = 800
-                    # _comp_inv_weight = 5*(min(math.log(max(-self.steps + _comp_inv_end_step,1),_comp_inv_end_step),1)*0.8+0.2)
-                    _component_balance = 1 - min(self.steps/_comp_inv_end_step,1)*0.99
-                    _comp_inv_weight = 100
-                    self.accelerator.backward(
-                        (
-                            (1-_component_balance) * task_losses[task_index].mean() +
-                            _component_balance * _comp_inv_weight * (_comp_inv_loss_weight @ _comp_inv_loss_pair)
-                        )
-                    )
+                    self.accelerator.backward(task_losses[task_index].mean())
 
                 # cache output artifacts
                 self.batch_losses[name] = task_losses[task_index].detach()
                 self.batch_logits[name] = task_logits[task_index].detach()
                 self.batch_labels[name] = batch[1][task_index].detach()
-                self.batch_losses["recon"] = recon_loss.detach()
-                self.batch_losses["match"] = match_loss.detach()
             
             self.optimizer.step()
             self.lr_scheduler.step()

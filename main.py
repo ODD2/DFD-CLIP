@@ -212,7 +212,6 @@ def main(params):
             transform=model.transform,
             accelerator=accelerator,
             split='train',
-            pair=True,
             index=i
         ) for i,cfg in enumerate(config.data.train)
     ]
@@ -228,7 +227,6 @@ def main(params):
             model.transform,
             accelerator=accelerator,
             split='val',
-            pair=True,
             index=i
         )  for i,cfg in enumerate(config.data.eval)
     ]
