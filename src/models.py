@@ -350,11 +350,11 @@ class Detector(nn.Module):
                         recon_loss += torch.norm(
                             supplements["b_kvs"][layer][subject][raw_sup] - 
                             supplements["a_kvs"][layer][subject][raw_sup]
-                        )/(_l * _t * _p)
+                        )/(_b * _l * _t * _p)
                         match_loss += torch.norm(
                             supplements["a_kvs"][layer][subject][raw_sup] - 
                             supplements["a_kvs"][layer][subject][c23_sup]
-                        )/(_l * _t * _p)
+                        )/(_b * _l * _t * _p)
 
             return task_losses, task_logits, recon_loss, match_loss
         else:
