@@ -5,7 +5,10 @@ import torch
 from torch.utils.data.dataloader import Dataset, DataLoader
 from yacs.config import CfgNode as CN
 
-class Evaluator:
+class _Evaluator:
+    pass
+
+class Evaluator(_Evaluator):
     @staticmethod
     def get_default_config():
         C = CN()
@@ -90,7 +93,7 @@ class Evaluator:
         self.trigger_callbacks('on_evaluation_end')
 
 
-class CompInvEvaluator:
+class CompInvEvaluator(_Evaluator):
     @staticmethod
     def get_default_config():
         C = CN()

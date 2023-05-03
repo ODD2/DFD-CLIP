@@ -1,14 +1,14 @@
 import builtins
 
 import torch
-from ..trainer import Trainer
+from ..trainer import _Trainer
 
 @torch.no_grad()
 def update_trackers(agent):
     if agent.steps % agent.training_eval_interval:
         return
 
-    if not isinstance(agent, Trainer):
+    if not isinstance(agent, _Trainer):
         return
 
     agent.accelerator.log(

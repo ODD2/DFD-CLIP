@@ -7,7 +7,10 @@ from torch.utils.data.dataloader import DataLoader
 from torch.optim.lr_scheduler import OneCycleLR
 from yacs.config import CfgNode as CN
 
-class Trainer:
+class _Trainer:
+    pass
+
+class Trainer(_Trainer):
     '''
     Generic neural network trainer. Expect to get the optmizer and loss from
     the model instance. (since they're more model-dependent). Metrics and
@@ -190,7 +193,7 @@ class Trainer:
 
 
 
-class CompInvTrainer:
+class CompInvTrainer(_Trainer):
     '''
     Generic neural network trainer. Expect to get the optmizer and loss from
     the model instance. (since they're more model-dependent). Metrics and

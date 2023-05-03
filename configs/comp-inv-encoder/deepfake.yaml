@@ -31,7 +31,7 @@ trainer:
   name: CompInvTrainer
   batch_size: 4
   learning_rate: 0.0003
-  max_steps: 50
+  max_steps: 3000
   num_workers: 8
 
 
@@ -42,6 +42,6 @@ evaluator:
 
 system:
   deterministic_training: true
-  training_eval_interval: 5
-  evaluation_interval: 10
+  training_eval_interval: 10
+  evaluation_interval: 100
 
