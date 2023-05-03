@@ -212,24 +212,8 @@ class Decoder(nn.Module):
 
 
     def forward(self, kvs, m):
-        supplements = {}
-        
-        b,t,p,h,d = kvs[0]['k'].shape
         m = m.repeat_interleave(kvs[0]['k'].size(2), dim=-1)
-        # perform compression invariant transformation, per layer per key has it's transform matrix
-        # record the before/after logits to for loss calculation
 
-        supplements["b_kvs"] = kvs
-
-        kvs = [
-            {
-                k: (self.comp_adpts[i][k](v.view((b,t,p,-1)))).view((b,t,p,h,d)) for k, v in kv.items()
-            }
-            for i,kv in enumerate(kvs)
-        ]
-
-        supplements["a_kvs"] = kvs
-        
         kvs = [
             {
                 k: (v + self.positional_embedding).flatten(1, 2) for k, v in kv.items()
@@ -244,7 +228,7 @@ class Decoder(nn.Module):
         x = x.squeeze(1)
         x = [x @ projection for projection in self.projections]
         # return not only the logits but also the before after kvs
-        return x, supplements
+        return x
 
 
 def disable_gradients(module: nn.Module):
@@ -300,11 +284,13 @@ class Detector(nn.Module):
 
 
         self.decoder = Decoder(self, config, num_frames)
+        self.adapter = CompInvAdapter(self)
         self.transform = self._transform(self.encoder.input_resolution)
         
 
     def predict(self, x, m):
         b, t, c, h, w = x.shape
+        supplements = {}
         with torch.no_grad():
             # get key and value from each CLIP ViT layer
             kvs = self.encoder(x.flatten(0, 1))
@@ -312,8 +298,10 @@ class Detector(nn.Module):
             kvs = [{k: v[:, 1:].unflatten(0, (b, t)) for k, v in kv.items()} for kv in kvs]
 
             kvs = [kvs[i] for i in self.layer_indices]
-
-        task_logits,supplements = self.decoder(kvs, m)
+        supplements["b_kvs"] = kvs
+        kvs = self.adapter(kvs)
+        supplements["a_kvs"] = kvs
+        task_logits = self.decoder(kvs, m)
 
         for i in range(len(task_logits)):
             logits_l2_distance = torch.norm(task_logits[i],dim=-1,keepdim=True)
@@ -375,3 +363,39 @@ class Detector(nn.Module):
             T.Normalize((0.48145466, 0.4578275, 0.40821073),
                         (0.26862954, 0.26130258, 0.27577711)),
         ])
+
+
+class CompInvAdapter(nn.Module):
+    def __init__(self,detector):
+        width = detector.encoder.width
+        self.layer_blocks=[]
+        for i in range(len(detector.layer_indices)):
+            blk = {}
+            for j in ["k","v"]:
+                _name = f"l{i}_{j}"
+                setattr(
+                    self,
+                    _name,
+                    torch.nn.Sequential(
+                        torch.nn.Linear(width,width//3,bias=False),
+                        torch.nn.GELU(),
+                        torch.nn.LayerNorm(width//3),
+                        torch.nn.Linear(width//3,width,bias=False)
+                    )
+                )
+                blk[j] = getattr(self,_name)
+            self.layer_blocks.append(blk)
+
+    def forward(self, kvs):
+        b,t,p,h,d = kvs[0]['k'].shape
+        m = m.repeat_interleave(kvs[0]['k'].size(2), dim=-1)
+        # perform compression invariant transformation, per layer per key has it's transform matrix
+
+        kvs = [
+            {
+                k: (self.layer_blocks[i][k](v.view((b,t,p,-1)))).view((b,t,p,h,d)) for k, v in kv.items()
+            }
+            for i,kv in enumerate(kvs)
+        ]
+
+        return kvs
