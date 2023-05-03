@@ -11,6 +11,7 @@ model:
     - auc_roc
   adapter:
     type: pretrain
+    tune: 1
     path: /home/od/Desktop/repos/dfd-clip/logs/comp-inv/comp-inv/0503T1230/last_weights.pt
 
 data:
@@ -36,7 +37,7 @@ data:
 trainer:
   name: Trainer
   batch_size: 10
-  learning_rate: 0.0003
+  learning_rate: 0.0001
   max_steps: 3000
   num_workers: 8
   metrics:
