@@ -5,7 +5,8 @@ tracking:
 
 model:
   name: CompInvEncoder
-
+  mode: 1
+  
 data:
   num_frames: 50
   train:

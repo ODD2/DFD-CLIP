@@ -396,6 +396,7 @@ class CompInvEncoder(nn.Module):
         C.decode_stride = 2
         C.decode_indices = []
         C.dropout = 0.0
+        C.mode = 0
         return C
 
     def __init__(self, config, accelerator,*args,**kargs):
@@ -413,6 +414,8 @@ class CompInvEncoder(nn.Module):
             self.layer_indices = config.decode_indices
         else:
             raise Exception(f"Unknown decode type: {self.decode_type}")
+
+        self.mode = int(config.mode)
 
         self.adapter = CompInvAdapter(self)
         self.transform = self._transform(self.encoder.input_resolution)
@@ -459,8 +462,11 @@ class CompInvEncoder(nn.Module):
 
             for layer in range(_l):
                 for subject in ["k","v"]:
-                    recon_diff += torch.abs(_kvs[layer][subject][raw_sup] - kvs[layer][subject][raw_sup])
-                    match_diff += torch.abs(kvs[layer][subject][raw_sup] - kvs[layer][subject][c23_sup])
+                    if(self.mode == 0):
+                        recon_diff += torch.abs(_kvs[layer][subject][raw_sup] - kvs[layer][subject][raw_sup])
+                        match_diff += torch.abs(kvs[layer][subject][raw_sup] - kvs[layer][subject][c23_sup])
+                    elif(self.mode == 1):
+                        match_diff += torch.abs(_kvs[layer][subject][raw_sup] - kvs[layer][subject][c23_sup])
     
         recon_loss = torch.norm((recon_diff/(_w * _l *  2)).view((_p,_t,-1)).mean(dim=1))/_p
         match_loss = torch.norm((match_diff/(_w * _l *  2)).view((_p,_t,-1)).mean(dim=1))/_p
