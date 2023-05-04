@@ -322,7 +322,7 @@ class Detector(nn.Module):
 
     def configure_optimizers(self, lr):
         return torch.optim.AdamW(
-            params=list(self.decoder.parameters()), 
+            params=[i for i in self.parameters() if i.requires_grad], 
             lr=lr
         )
 
