@@ -283,7 +283,7 @@ class Detector(nn.Module):
                     '.'.join(k.split('.')[1:]): v  for k,v in  data.items() if "adapter"  in k
                 }
                 self.adapter.load_state_dict(data)
-                if(config.adapter.tune):
+                if(config.adapter.frozen):
                     self.adapter = disable_gradients(self.adapter)
             
         self.transform = self._transform(self.encoder.input_resolution)

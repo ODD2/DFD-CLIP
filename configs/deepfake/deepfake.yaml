@@ -11,7 +11,7 @@ model:
     - auc_roc
   adapter:
     type: pretrain
-    tune: 1
+    frozen: 0
     path: /home/od/Desktop/repos/dfd-clip/logs/comp-inv/comp-inv/0504T0529/last_weights.pt
 
 data:

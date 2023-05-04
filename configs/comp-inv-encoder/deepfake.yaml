@@ -6,7 +6,7 @@ tracking:
 model:
   name: CompInvEncoder
   mode: 1
-  
+
 data:
   num_frames: 50
   train:
@@ -20,20 +20,11 @@ data:
         - "FS"
         - "F2F"
       pair: 1
-  eval:
-    - name: Deepfake
-      dataset: FFPP
-      compressions: 
-        - "c23"
-      types:
-        - "REAL"
-        - "NT"
-      pair: 1
 
 trainer:
   name: CompInvTrainer
   batch_size: 4
-  learning_rate: 0.0003
+  learning_rate: 0.01
   max_steps: 3000
   num_workers: 8
 
