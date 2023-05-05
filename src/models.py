@@ -353,10 +353,10 @@ class CompInvAdapter(nn.Module):
                     self,
                     _name,
                     torch.nn.Sequential(
-                        torch.nn.Linear(width,width//3*2,bias=False),
+                        torch.nn.Linear(width,width//3,bias=False),
                         torch.nn.GELU(),
-                        torch.nn.LayerNorm(width//3*2),
-                        torch.nn.Linear(width//3*2,width,bias=False)
+                        torch.nn.LayerNorm(width//3),
+                        torch.nn.Linear(width//3,width,bias=False)
                     )
                 )
                 blk[j] = getattr(self,_name)
@@ -367,7 +367,7 @@ class CompInvAdapter(nn.Module):
         # perform compression invariant transformation, per layer per key has it's transform matrix
         kvs = [
             {
-                k: (self.layer_blocks[i][k](v.view((b,t,p,-1)))).view((b,t,p,h,d)) for k, v in kv.items()
+                k: (self.layer_blocks[i][k](v.view((b,t,p,-1)))).view((b,t,p,h,d)) + v for k, v in kv.items()
             }
             for i,kv in enumerate(kvs)
         ]
