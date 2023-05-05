@@ -353,10 +353,10 @@ class CompInvAdapter(nn.Module):
                     self,
                     _name,
                     torch.nn.Sequential(
-                        torch.nn.Linear(width,width//3,bias=False),
+                        torch.nn.Linear(width,width//3*2,bias=False),
                         torch.nn.GELU(),
-                        torch.nn.LayerNorm(width//3),
-                        torch.nn.Linear(width//3,width,bias=False)
+                        torch.nn.LayerNorm(width//3*2),
+                        torch.nn.Linear(width//3*2,width,bias=False)
                     )
                 )
                 blk[j] = getattr(self,_name)
