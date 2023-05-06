@@ -276,7 +276,7 @@ class Detector(nn.Module):
         if(config.adapter.type == "none"):
             self.adapter = None
         else:
-            self.adapter = CompInvAdapter(self)
+            self.adapter = CompInvAdapter(self,num_frames=num_frames)
             if(config.adapter.type == "pretrain"):
                 data = torch.load(config.adapter.path)
                 data = {
@@ -341,7 +341,7 @@ class Detector(nn.Module):
 
 
 class CompInvAdapter(nn.Module):
-    def __init__(self,detector):
+    def __init__(self,detector,num_frames=50):
         super().__init__()
         width = detector.encoder.width
         self.layer_blocks=[]
@@ -352,11 +352,15 @@ class CompInvAdapter(nn.Module):
                 setattr(
                     self,
                     _name,
+                    # torch.nn.Sequential(
+                    #     torch.nn.Linear(width,width//3,bias=False),
+                    #     torch.nn.GELU(),
+                    #     torch.nn.LayerNorm(width//3),
+                    #     torch.nn.Linear(width//3,width,bias=False)
+                    # )
                     torch.nn.Sequential(
-                        torch.nn.Linear(width,width//3,bias=False),
-                        torch.nn.GELU(),
-                        torch.nn.LayerNorm(width//3),
-                        torch.nn.Linear(width//3,width,bias=False)
+                        torch.nn.Linear(width,width,bias=False),
+                        torch.nn.BatchNorm2d(num_frames)
                     )
                 )
                 blk[j] = getattr(self,_name)
@@ -399,7 +403,7 @@ class CompInvEncoder(nn.Module):
         C.mode = 0
         return C
 
-    def __init__(self, config, accelerator,*args,**kargs):
+    def __init__(self, config, accelerator,num_frames=50,*args,**kargs):
         super().__init__()
         assert config.decode_mode in ["stride","index"]
 
@@ -417,7 +421,7 @@ class CompInvEncoder(nn.Module):
 
         self.mode = int(config.mode)
 
-        self.adapter = CompInvAdapter(self)
+        self.adapter = CompInvAdapter(self,num_frames=num_frames)
         self.transform = self._transform(self.encoder.input_resolution)
         
     def predict(self, x):
