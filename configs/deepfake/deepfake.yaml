@@ -12,8 +12,10 @@ model:
   adapter:
     type: pretrain
     frozen: 0
-    path: /home/od/Desktop/repos/dfd-clip/logs/comp-inv/comp-inv/0504T0529/last_weights.pt
-
+    path: /home/od/Desktop/repos/dfd-clip/logs/comp-inv/comp-inv/0506T1343/last_weights.pt
+    struct:
+      type: "768-x-768"
+      x: 256
 data:
   train:
     - name: Deepfake
@@ -36,7 +38,7 @@ data:
 
 trainer:
   name: Trainer
-  batch_size: 10
+  batch_size: 8
   learning_rate: 0.0005
   max_steps: 3000
   num_workers: 8

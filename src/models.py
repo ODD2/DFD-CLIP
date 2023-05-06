@@ -276,7 +276,7 @@ class Detector(nn.Module):
         if(config.adapter.type == "none"):
             self.adapter = None
         else:
-            self.adapter = CompInvAdapter(self,num_frames=num_frames)
+            self.adapter = CompInvAdapter(config,self,num_frames=num_frames)
             if(config.adapter.type == "pretrain"):
                 data = torch.load(config.adapter.path)
                 data = {
@@ -341,7 +341,7 @@ class Detector(nn.Module):
 
 
 class CompInvAdapter(nn.Module):
-    def __init__(self,detector,num_frames=50):
+    def __init__(self,config,detector,num_frames=50):
         super().__init__()
         width = detector.encoder.width
         self.layer_blocks=[]
@@ -349,16 +349,31 @@ class CompInvAdapter(nn.Module):
             blk = {}
             for j in ["k","v"]:
                 _name = f"l{i}_{j}"
-                setattr(
-                    self,
-                    _name,
-                    torch.nn.Sequential(
-                        torch.nn.Linear(width,width//12,bias=False),
-                        torch.nn.GELU(),
-                        torch.nn.LayerNorm(width//12),
-                        torch.nn.Linear(width//12,width,bias=False)
+
+                if(config.adapter.struct.type == "768-x-768"):
+                    inner_dim = int(config.adapter.struct.x)
+                    setattr(
+                        self,
+                        _name,
+                        torch.nn.Sequential(
+                            torch.nn.Linear(width,inner_dim,bias=False),
+                            torch.nn.GELU(),
+                            torch.nn.LayerNorm(inner_dim),
+                            torch.nn.Linear(inner_dim,width,bias=False)
+                        )
                     )
-                )
+                elif(config.adapter.struct.type == "768-bn"):
+                    setattr(
+                        self,
+                        _name,
+                        torch.nn.Sequential(
+                            torch.nn.Linear(768,768,bias=False),
+                            torch.nn.BatchNorm2d(num_frames)
+                        )
+                    )
+                else:
+                    raise NotImplemented()
+            
                 blk[j] = getattr(self,_name)
             self.layer_blocks.append(blk)
 
@@ -395,6 +410,7 @@ class CompInvEncoder(nn.Module):
         C.decode_mode = "stride"
         C.decode_stride = 2
         C.decode_indices = []
+        C.adapter = CN(new_allowed=True)
         C.dropout = 0.0
         C.mode = 0
         return C
@@ -417,7 +433,7 @@ class CompInvEncoder(nn.Module):
 
         self.mode = int(config.mode)
 
-        self.adapter = CompInvAdapter(self,num_frames=num_frames)
+        self.adapter = CompInvAdapter(config,self,num_frames=num_frames)
         self.transform = self._transform(self.encoder.input_resolution)
         
     def predict(self, x):

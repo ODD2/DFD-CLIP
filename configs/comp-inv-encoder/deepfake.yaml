@@ -6,6 +6,10 @@ tracking:
 model:
   name: CompInvEncoder
   mode: 1
+  adapter:
+    struct:
+      type: "768-x-768"
+      x: 256
 
 data:
   num_frames: 50
@@ -19,11 +23,12 @@ data:
         - "DF"
         - "FS"
         - "F2F"
+        - "NT"
       pair: 1
 
 trainer:
   name: CompInvTrainer
-  batch_size: 4
+  batch_size: 5
   learning_rate: 0.01
   max_steps: 3000
   num_workers: 8
