@@ -11,8 +11,8 @@
             "module": "main",
             "args": [
                 "--cfg",
-                "configs/comp-inv-encoder/deepfake.yaml",
-                // "configs/deepfake/deepfake.yaml",
+                // "configs/comp-inv-encoder/deepfake.yaml",
+                "configs/deepfake/deepfake.yaml",
                 "--test"
             ],
             "justMyCode": false

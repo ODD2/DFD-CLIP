@@ -181,6 +181,7 @@ class FFPP(Dataset):
         C.scale = 1.0
         C.pack = 0
         C.pair = 0
+        C.contrast = 0
         return C
 
     def __init__(self, config,num_frames,clip_duration, transform=None, accelerator=None, split='train',index=0):
@@ -208,6 +209,7 @@ class FFPP(Dataset):
         self.scale = config.scale
         self.pack = bool(config.pack)
         self.pair = bool(config.pair)
+        self.contrast = bool(config.contrast)
         # available clips per data
         self.video_list = []
 
@@ -310,15 +312,31 @@ class FFPP(Dataset):
                     label.append(result["label"])
                     mask.append(result["mask"])
             return frames,label,mask,self.index
+        elif(self.contrast):
+            _, df_type, _, _, _ = self.__video_info(idx)
+            main_label = (not df_type == "REAL")
+            main_idx = idx
+            auxi_idx = random.randint(0,len(self))
+            result = []
+            result.append(self.get_dict(main_idx,target_label=main_label))
+            result.append(self.get_dict(auxi_idx,target_label=(not main_label)))
+            return *[[ _r[name] for _r in result] for name in ["frames","label","mask"] ] , [self.index]*2
         else:
             result = self.get_dict(idx)
             return result["frames"],result["label"],result["mask"],self.index
 
-    def get_dict(self,idx,block=False):
+    def get_dict(self,idx,block=False,target_label=None):
         while(True):
             try:
-                video_idx =  next(i for i,x in enumerate(self.stack_video_clips) if  idx < x)
-                df_type, comp, video_name, clips = self.video_list[video_idx]
+                # video_idx =  next(i for i,x in enumerate(self.stack_video_clips) if  idx < x)
+                # df_type, comp, video_name, clips = self.video_list[video_idx]
+                video_idx, df_type, comp, video_name, clips = self.__video_info(idx)
+
+                # while specified the target label, resample a video index to match.
+                if(not target_label == None and not target_label and not df_type=="REAL"):
+                    idx = random.randrange(0,len(self))
+                    continue
+
                 video_meta = self.video_table[df_type][comp][video_name]
                 video_offset_duration =  (idx - (0 if video_idx == 0 else self.stack_video_clips[video_idx-1]))*self.clip_duration
                 logging.debug(f"Item/Video Index:{idx}/{video_idx}")
@@ -392,9 +410,19 @@ class FFPP(Dataset):
                 else:
                     idx = random.randrange(0,len(self))
 
-    @staticmethod
-    def collate_fn(batch):
+    def __video_info(self,idx):
+        video_idx =  next(i for i,x in enumerate(self.stack_video_clips) if  idx < x)
+        return video_idx, *self.video_list[video_idx]
+
+    def collate_fn(self,batch):
         _frames,_label,_mask,_index = list(zip(*batch))
+        
+        if(self.contrast):
+            _frames = [i for l in _frames for i in l]
+            _label = [i for l in _label for i in l]
+            _mask = [i for l in _mask for i in l]
+            _index = [i for l in _index for i in l]
+        
         _comps = list(_frames[0].keys())
         num_vids = len(_frames)
         num_comps = len(_comps)
