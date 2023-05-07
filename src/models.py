@@ -20,7 +20,12 @@ def kl_div(logits,y):
 
 
 def auc_roc(logits,y):
-    return torch.nn.functional.cross_entropy(logits, y, reduction='none')
+    return torch.nn.functional.cross_entropy(
+        logits,
+        y,
+        weight=torch.tensor([3.0,1.0],device=logits.device),
+        reduction='none'
+    )
 
 
 class LayerNorm(nn.LayerNorm):
