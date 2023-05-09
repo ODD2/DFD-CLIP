@@ -24,7 +24,7 @@ def get_config(cfg_file,args):
     C = CN()
     
     # prerequisite: fetch the Deepfake detection task index during training.
-    C.target_task = next(i for i,d in enumerate(preset.data.eval) if d.name == "Deepfake" and d.dataset=="FFPP")
+    C.target_task = next(i for i,d in enumerate(preset.data.eval) if d.category == "Deepfake")
 
     if args.aux_file:
         with open(args.aux_file) as f:
@@ -36,9 +36,9 @@ def get_config(cfg_file,args):
     C.data.clip_duration = preset.data.clip_duration
 
     C.data.datasets = [
-        globals()[d.dataset].get_default_config().merge_from_other_cfg(d) 
+        globals()[d.name].get_default_config().merge_from_other_cfg(d) 
         for d in preset.data.eval + (aux.data.eval if args.aux_file else [])
-        if d.name == "Deepfake"
+        if d.category == "Deepfake"
     ]
 
     if args.test:
@@ -74,7 +74,7 @@ def main(args):
         # prepare model and dataset
         model = Detector(config.model, config.data.num_frames, accelerator).to(accelerator.device).eval()
         ds_cfg.pack = 1
-        test_dataset = globals()[ds_cfg.dataset](
+        test_dataset = globals()[ds_cfg.name](
             ds_cfg,
             config.data.num_frames,
             config.data.clip_duration,
@@ -83,7 +83,7 @@ def main(args):
             split='test',
             index=config.target_task,
         )
-        stats[ds_cfg.dataset] = {
+        stats[ds_cfg.name] = {
             "label":[],
             "prob":[]
         }
@@ -131,8 +131,8 @@ def main(args):
                 (pred_prob, pred_label, label)
             )
 
-            stats[ds_cfg.dataset]["label"] += labels.tolist()
-            stats[ds_cfg.dataset]["prob"] += pred_probs[:,1].tolist()
+            stats[ds_cfg.name]["label"] += labels.tolist()
+            stats[ds_cfg.name]["prob"] += pred_probs[:,1].tolist()
 
 
             if accelerator.is_local_main_process:

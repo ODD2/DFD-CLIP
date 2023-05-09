@@ -26,7 +26,7 @@ class Evaluator(_Evaluator):
         self.dataloaders = {}
 
         for dataset in datasets:
-            self.dataloaders[dataset.name] = self.accelerator.prepare(
+            self.dataloaders[f"{dataset.category}/{dataset.name}"] = self.accelerator.prepare(
                 DataLoader(
                     dataset,
                     batch_size=config.batch_size,
@@ -88,7 +88,7 @@ class Evaluator(_Evaluator):
                 self.batch_logits[name] = task_logits[task_index].detach()
                 self.batch_labels[name] = batch[1][task_index].detach()
             self.batch_num += 1
-            self.batch_loss_info = ",".join([f"{losses.mean().item()}({name}_loss) " for name,losses in self.batch_losses.items()])
+            self.batch_loss_info = ",".join([f"{losses.mean().item()}({name}) " for name,losses in self.batch_losses.items()])
             self.trigger_callbacks('on_batch_end')
         self.trigger_callbacks('on_evaluation_end')
 
@@ -111,7 +111,7 @@ class CompInvEvaluator(_Evaluator):
         self.dataloaders = {}
 
         for dataset in datasets:
-            self.dataloaders[dataset.name] = self.accelerator.prepare(
+            self.dataloaders[f"{dataset.category}/{dataset.name}"] = self.accelerator.prepare(
                 DataLoader(
                     dataset,
                     batch_size=config.batch_size,
@@ -162,7 +162,7 @@ class CompInvEvaluator(_Evaluator):
                 self.batch_losses["match"] = match_loss.detach()
 
             self.batch_num += 1
-            self.batch_loss_info = ",".join([f"{losses.mean().item()}({name}_loss) " for name,losses in self.batch_losses.items()])
+            self.batch_loss_info = ",".join([f"{losses.mean().item()}({name}) " for name,losses in self.batch_losses.items()])
             self.trigger_callbacks('on_batch_end')
 
         self.trigger_callbacks('on_evaluation_end')

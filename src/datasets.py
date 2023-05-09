@@ -10,7 +10,7 @@ from os import path, scandir, makedirs
 
 import torch
 import torchvision
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset,default_collate
 from torchvision.io import VideoReader
 from tqdm.auto import tqdm
 from yacs.config import CfgNode as CN
@@ -172,12 +172,12 @@ class FFPP(Dataset):
     @staticmethod
     def get_default_config():
         C = CN()
-        C.name = 'train'
+        C.category = 'train'
         C.root_dir = './datasets/ffpp/'
         C.detection_level = 'video'
         C.types = ['REAL', 'DF','F2F','FS','NT']
         C.compressions = ['raw']
-        C.dataset = "FFPP"
+        C.name = "FFPP"
         C.scale = 1.0
         C.pack = 0
         C.pair = 0
@@ -196,7 +196,8 @@ class FFPP(Dataset):
             # 'FSH' : 'data/manipulated_sequences/FaceShifter/',
             # 'DFD-FAKE' : 'data/manipulated_sequences/DeepFakeDetection/',
         }
-        self.name = config.name
+        self.category = config.category.lower()
+        self.name = config.name.lower()
         self.root = path.expanduser(config.root_dir)
         self.detection_level = config.detection_level
         self.types = config.types
@@ -445,7 +446,7 @@ class RPPG(Dataset):
     @staticmethod
     def get_default_config():
         C = CN()
-        C.name = 'train'
+        C.category = 'train'
         C.root_dir = './datasets/hci/'
         C.detection_level = 'video'
         C.train_ratio = 0.95
@@ -453,7 +454,7 @@ class RPPG(Dataset):
         C.cropped_folder="cropped_faces"
         C.meta_folder="Metas"
         C.measure_folder = "Measures"
-        C.dataset="RPPG"
+        C.name="RPPG"
         C.compressions = ["raw"]
         C.runtime = True
         C.label_type = "dist"
@@ -466,8 +467,8 @@ class RPPG(Dataset):
         assert 140 <= config.label_dim , "config.label_dim should be atleast 140."
         assert split in ["train","val"], "split value not acceptable"
         assert config.label_type in ["num","dist"]
-        # TODO: accelerator not implemented
-        self.name = config.name
+        self.category = config.category.lower()
+        self.name = config.name.lower()
         # HCI datasets recorded videos with 61 fps
         self.transform = transform
         self.num_frames = num_frames
@@ -723,18 +724,22 @@ class CDF(Dataset):
     @staticmethod
     def get_default_config():
         C = CN()
-        C.name = 'CDF'
+        C.category = 'CDF'
         C.root_dir = './datasets/cdf/'
-        C.dataset = "CDF"
+        C.name = "CDF"
         C.scale = 1.0
         C.pack = 0
         return C
 
-    def __init__(self, config,num_frames,clip_duration, transform=None, accelerator=None, split="test",index=0,*args,**kwargs):
+    def __init__(self, config,num_frames,clip_duration, transform=None, accelerator=None, split="test", index=0,*args,**kwargs):
+        if(not split == "test"):
+            logging.warn(f"Dataset {self.__class__.__name__.upper()} currently support only the test split.")
+            split = "test"
         assert 0 <= config.scale <= 1
         assert split == "test", f"Split '{split.upper()}' Not Implemented."
 
-        self.name = config.name
+        self.category = config.category.lower()
+        self.name = config.name.lower()
         self.root = path.expanduser(config.root_dir)
         self.num_frames = num_frames
         self.clip_duration = clip_duration
@@ -742,6 +747,7 @@ class CDF(Dataset):
         self.index = index
         self.scale = config.scale
         self.pack = bool(config.pack)
+        self.split = split
         # available clips per data
         self.video_list = []
 
@@ -798,7 +804,7 @@ class CDF(Dataset):
         self.video_list = []
         for label in ["REAL","FAKE"]:
             video_list = pd.read_csv(
-                path.join(self.root, 'csv_files', f'test_{label.lower()}.csv'),
+                path.join(self.root, 'csv_files', f'{self.split}_{label.lower()}.csv'),
                 sep=' ',
                 header=None,
                 names=["name","label"]
@@ -857,7 +863,7 @@ class CDF(Dataset):
                 video_meta = self.video_table[label][video_name]
                 video_offset_duration =  (idx - (0 if video_idx == 0 else self.stack_video_clips[video_idx-1]))*self.clip_duration
                 logging.debug(f"Item/Video Index:{idx}/{video_idx}")
-                logging.debug(f"Item LABEL:{label}")
+                logging.debug(f"Item Label:{label}")
 
                 # video frame processing
                 frames = []
@@ -911,22 +917,29 @@ class CDF(Dataset):
                 else:
                     idx = random.randrange(0,len(self))
 
+    def collate_fn(self,batch):
+        return default_collate(batch)
+    
 class DFDC(Dataset):
     @staticmethod
     def get_default_config():
         C = CN()
-        C.name = 'DFDC'
+        C.category = 'DFDC'
         C.root_dir = './datasets/dfdc/'
-        C.dataset = "DFDC"
+        C.name = "DFDC"
         C.scale = 1.0
         C.pack = 0
         return C
 
     def __init__(self, config,num_frames,clip_duration, transform=None, accelerator=None, split="test",index=0,*args,**kwargs):
+        if(not split == "test"):
+            logging.warn(f"Dataset {self.__class__.__name__.upper()} currently support only the test split.")
+            split = "test"
         assert 0 <= config.scale <= 1
         assert split == "test", f"Split '{split.upper()}' Not Implemented."
 
-        self.name = config.name
+        self.category = config.category.lower()
+        self.name = config.name.lower()
         self.root = path.expanduser(config.root_dir)
         self.num_frames = num_frames
         self.clip_duration = clip_duration
@@ -934,6 +947,7 @@ class DFDC(Dataset):
         self.index = index
         self.scale = config.scale
         self.pack = bool(config.pack)
+        self.split = split
         # available clips per data
         self.video_list = []
 
@@ -983,7 +997,7 @@ class DFDC(Dataset):
         self.video_list = []
 
         video_list = pd.read_csv(
-            path.join(self.root, 'csv_files', f'test.csv'),
+            path.join(self.root, 'csv_files', f'{self.split}.csv'),
             sep=' ',
             header=None,
             names=["name","label"]
@@ -1044,7 +1058,7 @@ class DFDC(Dataset):
                 video_meta = self.video_table[video_name]
                 video_offset_duration =  (idx - (0 if video_idx == 0 else self.stack_video_clips[video_idx-1]))*self.clip_duration
                 logging.debug(f"Item/Video Index:{idx}/{video_idx}")
-                logging.debug(f"Item LABEL:{label}")
+                logging.debug(f"Item Label:{label}")
 
                 # video frame processing
                 frames = []
@@ -1098,5 +1112,6 @@ class DFDC(Dataset):
                 else:
                     idx = random.randrange(0,len(self))
 
-
+    def collate_fn(self,batch):
+        return default_collate(batch)
 

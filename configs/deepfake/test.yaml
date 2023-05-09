@@ -44,7 +44,7 @@ data:
       
     - category: Deepfake
       name: CDF
-      scale: 0.6
+      scale: 0.1
 
 trainer:
   name: Trainer
@@ -67,12 +67,10 @@ evaluator:
       types:
         - accuracy
         - roc_auc
-        
     - name: deepfake/cdf
       types:
         - accuracy
         - roc_auc
-
     - name: deepfake/dfdc
       types:
         - accuracy
@@ -80,6 +78,6 @@ evaluator:
 
 system:
   deterministic_training: true
-  training_eval_interval: 10
-  evaluation_interval: 300
+  training_eval_interval: 5
+  evaluation_interval: 10
 

@@ -1,8 +1,8 @@
 data:
   eval:
-    - name: Deepfake
-      dataset: CDF
+    - category: Deepfake
+      name: CDF
       pack: 1
-    - name: Deepfake
-      dataset: DFDC
+    - category: Deepfake
+      name: DFDC
       pack: 1

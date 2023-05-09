@@ -12,12 +12,12 @@ from accelerate import Accelerator,DistributedDataParallelKwargs
 from yacs.config import CfgNode as CN
 
 from src.models import Detector,CompInvEncoder
-from src.datasets import RPPG,FFPP
+from src.datasets import RPPG,FFPP,DFDC,CDF
 from src.trainer import Trainer,CompInvTrainer
 from src.evaluator import Evaluator,CompInvEvaluator
 from src.callbacks.timer import start_timer, end_timer
 from src.callbacks.metrics import init_metrics, update_metrics, compute_metrics
-from src.callbacks.tracking import update_trackers, add_main_metric, cache_best_model
+from src.callbacks.tracking import update_trackers,  cache_best_model
 
 def get_config(params):
     config_file = params.cfg
@@ -38,7 +38,7 @@ def get_config(params):
     C.tracking.project_name = None
     C.tracking.default_project_prefix = 'version'
     C.tracking.tool = 'wandb'
-    C.tracking.main_metric = 'roc_auc' # accuracy | roc_auc
+    C.tracking.main_metric = 'deepfake/ffpp/roc_auc' # accuracy | roc_auc
     C.tracking.compare_fn = 'max' # max | min
 
     # model
@@ -73,7 +73,7 @@ def get_config(params):
         # train dataset
         C.data.train = [
             (
-                globals()[d_train.dataset]
+                globals()[d_train.name]
                 .get_default_config()
                 .merge_from_other_cfg(d_train)
             )
@@ -83,7 +83,7 @@ def get_config(params):
         # eval datasets
         C.data.eval = [
             (
-                globals()[d_eval.dataset]
+                globals()[d_eval.name]
                 .get_default_config()
                 .merge_from_other_cfg(d_eval)
             )
@@ -203,35 +203,45 @@ def main(params):
     # initialize model
     model =  globals()[config.model.name](config.model, accelerator=accelerator,num_frames=config.data.num_frames, )
 
+    # category to task index mapping
+    category_index = {
+        cat: i for i,cat in enumerate(set([cfg.category for cfg in config.data.train]))
+    }
+
+    accelerator.print(f"Task Indices:")
+    for k,v in category_index.items():
+        accelerator.print(f"\t- {k} => {v}")
+
     # initialize datasets
     train_datasets = [
-        globals()[cfg.dataset](
+        globals()[cfg.name](
             cfg,
             config.data.num_frames,
             config.data.clip_duration,
             transform=model.transform,
             accelerator=accelerator,
             split='train',
-            index=i
-        ) for i,cfg in enumerate(config.data.train)
+            index=category_index[cfg.category]
+        ) for cfg in config.data.train
     ]
 
     for dataset in train_datasets:
-        accelerator.print(f'Training Dataset {dataset.name} initialized with {len(dataset)} samples\n')
+        accelerator.print(f'Training Dataset {dataset.__class__.__name__.upper()} initialized with {len(dataset)} samples\n')
 
     eval_datasets = [
-        globals()[cfg.dataset](
+        globals()[cfg.name](
             cfg, 
             config.data.num_frames,
             config.data.clip_duration,
             model.transform,
             accelerator=accelerator,
             split='val',
-            index=i
-        )  for i,cfg in enumerate(config.data.eval)
+            index=category_index[cfg.category]
+        ) for cfg in config.data.eval
     ]
+
     for dataset in eval_datasets:
-        accelerator.print(f'Evaluation Dataset {dataset.name} initialized with {len(dataset)} samples\n')
+        accelerator.print(f'Evaluation Dataset {dataset.__class__.__name__.upper()} initialized with {len(dataset)} samples\n')
 
     # initialize trainer and evaluator
     trainer = globals()[config.trainer.name](config.trainer, accelerator, model, train_datasets)

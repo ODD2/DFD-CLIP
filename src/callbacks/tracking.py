@@ -1,5 +1,5 @@
 import builtins
-
+import re
 import torch
 from ..trainer import _Trainer
 
@@ -19,21 +19,16 @@ def update_trackers(agent):
     )
 
 
-# model saver
-@torch.no_grad()
-def add_main_metric(agent):
-    agent.current_main_metrics.append(getattr(agent, agent.main_metric))
-
 @torch.no_grad()
 def cache_best_model(agent):
-    target_metrics = [value for name,value in agent.compute_metrics.items() if  agent.main_metric in name]
+    target_metrics = [value for name,value in agent.compute_metrics.items() if re.search(agent.main_metric, name)]
     if(len(target_metrics) > 0):
         main_metric =  sum(target_metrics) / max(len(target_metrics) ,1)
         current_best = getattr(agent, 'best_main_metric', main_metric)
 
         if getattr(builtins, agent.compare_fn)(main_metric, current_best) == main_metric:
             # update best
-            agent.accelerator.print(f'best model updated with {agent.main_metric} of', main_metric,
+            agent.accelerator.print(f'best model updated with "{agent.main_metric}" of', main_metric,
                                     f'(past SOTA: {current_best})')
             agent.best_main_metric = main_metric
             agent.best_model_state = agent.accelerator.unwrap_model(agent.model).state_dict()

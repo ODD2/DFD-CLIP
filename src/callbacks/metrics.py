@@ -97,6 +97,7 @@ def update_metrics(agent):
     if not agent.accelerator.is_local_main_process:
         return
     
+    # update metrics
     for name,labels in batch_labels.items():
         for metric in agent.calcs[name].values():
             metric.add_batch(
@@ -104,6 +105,7 @@ def update_metrics(agent):
                 pred_probs=pred_probs[name].to(torch.float32),
                 labels=labels.to(torch.float32)
             )
+    # update losses
     for name,loss in batch_losses.items():
         if not name in agent.losses:
             agent.losses[name] = []
@@ -116,14 +118,17 @@ def compute_metrics(agent):
         return
     agent.compute_losses = {}
     agent.compute_metrics = {}
-    for lname in agent.losses.keys():
-        if lname in agent.calcs:
+
+    # compute metrics
+    for lname in  agent.calcs.keys():
             for mname,metric  in agent.calcs[lname].items():
                 agent.compute_metrics[f"metric/{lname}/{mname}"] = metric.compute()[mname]
-        
+
+    # compute losses
+    for lname in agent.losses.keys():
         agent.compute_losses[f"loss/{lname}"] = sum(agent.losses[lname]) / len(agent.losses[lname])
         agent.losses[lname].clear()
-
+    
     agent.accelerator.print(
         {
             **agent.compute_losses,

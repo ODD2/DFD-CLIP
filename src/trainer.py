@@ -32,8 +32,8 @@ class Trainer(_Trainer):
         return C
 
     def __init__(self, config, accelerator, model, datasets):
-        assert 0 <= config.teach_at <= config.max_steps
         assert config.mode in ["normal","teacher"]
+        assert not config.mode == "teacher" or (config.mode=="teacher" and 0 <= config.teach_at <= config.max_steps)
         self.config = config
         self.mode = config.mode
         self.accelerator = accelerator
@@ -62,7 +62,7 @@ class Trainer(_Trainer):
         self.model, self.optimizer, self.lr_scheduler,self.teacher = self.accelerator.prepare(self.model, self.optimizer, self.lr_scheduler,self.teacher)
 
         for dataset in datasets:
-            self.dataloaders[dataset.name] = self.accelerator.prepare(
+            self.dataloaders[f"{dataset.category}/{dataset.name}"] = self.accelerator.prepare(
                 DataLoader(
                     dataset,
                     shuffle=True,
@@ -166,7 +166,7 @@ class Trainer(_Trainer):
                 self.teaching = True
             
             # batch loss infos
-            self.batch_loss_info = ",".join([f"{losses.mean().item()}({name}_loss) " for name,losses in self.batch_losses.items()])
+            self.batch_loss_info = ",".join([f"{losses.mean().item()}({name}) " for name,losses in self.batch_losses.items()])
             self.trigger_callbacks('on_batch_end')
 
             if self.steps >= self.config.max_steps:
@@ -216,7 +216,7 @@ class CompInvTrainer(_Trainer):
         self.model, self.optimizer, self.lr_scheduler, = self.accelerator.prepare(self.model, self.optimizer, self.lr_scheduler)
 
         for dataset in datasets:
-            self.dataloaders[dataset.name] = self.accelerator.prepare(
+            self.dataloaders[f"{dataset.category}/{dataset.name}"] = self.accelerator.prepare(
                 DataLoader(
                     dataset,
                     shuffle=True,
@@ -280,7 +280,7 @@ class CompInvTrainer(_Trainer):
             self.steps += 1
             
             # batch loss infos
-            self.batch_loss_info = ",".join([f"{losses.mean().item()}({name}_loss) " for name,losses in self.batch_losses.items()])
+            self.batch_loss_info = ",".join([f"{losses.mean().item()}({name}) " for name,losses in self.batch_losses.items()])
             self.trigger_callbacks('on_batch_end')
 
             if self.steps >= self.config.max_steps:
