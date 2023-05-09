@@ -62,9 +62,14 @@ def collate_fn(batch):
 @torch.no_grad()
 def main(args):
     root = args.artifacts_dir
+    
     config = get_config(path.join(root, 'config.yaml'),args)
+
     accelerator = Accelerator()
+
     report = {}
+    stats = {}
+
     for ds_cfg in config.data.datasets:
         # prepare model and dataset
         model = Detector(config.model, config.data.num_frames, accelerator).to(accelerator.device).eval()
@@ -78,15 +83,14 @@ def main(args):
             split='test',
             index=config.target_task,
         )
+        stats[ds_cfg.dataset] = {
+            "label":[],
+            "prob":[]
+        }
         test_dataloader = accelerator.prepare(DataLoader(test_dataset, collate_fn=collate_fn))
         accelerator.print(f'Dataset {test_dataset.__class__.__name__} initialized with {len(test_dataset)} samples\n')
         with accelerator.main_process_first():
-            if args.weight_mode == "last":
-                model.load_state_dict(torch.load(path.join(root, 'last_weights.pt')))
-            elif(args.weight_mode == "best"):
-                model.load_state_dict(torch.load(path.join(root, 'best_weights.pt')))
-            else:
-                raise NotImplementedError()
+            model.load_state_dict(torch.load(path.join(root, f'{args.weight_mode}_weights.pt')))
         
         if accelerator.is_local_main_process:
             accuracy_calc = evaluate.load("accuracy")
@@ -127,6 +131,10 @@ def main(args):
                 (pred_prob, pred_label, label)
             )
 
+            stats[ds_cfg.dataset]["label"] += labels.tolist()
+            stats[ds_cfg.dataset]["prob"] += pred_probs[:,1].tolist()
+
+
             if accelerator.is_local_main_process:
                 accuracy_calc.add_batch(references=labels, predictions=pred_labels)
                 roc_auc_calc.add_batch(references=labels, prediction_scores=pred_probs[:, 1]) # prob of real class
@@ -139,8 +147,14 @@ def main(args):
                 "accuracy": accuracy,
                 "roc_auc": roc_auc
             }
-    with open(path.join(root, f'report_{datetime.utcnow().strftime("%m%dT%H%M")}.json'),"w") as f:
+
+    # save report and stats.
+    timestamp = datetime.utcnow().strftime("%m%dT%H%M")
+    with open(path.join(root, f'report_{timestamp}_{args.weight_mode}.json'),"w") as f:
         json.dump(report, f)
+
+    with open(path.join(root, f'stats_{timestamp}_{args.weight_mode}.pickle'),"wb") as f:
+        pickle.dump(stats,f)
 
 
 if __name__ == "__main__":
