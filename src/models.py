@@ -15,17 +15,23 @@ def mse(logits,y):
 
 
 
-def kl_div(logits,y):
-    return torch.nn.functional.kl_div(torch.nn.functional.log_softmax(logits,dim=1), y, reduction='none')
+def kl_div(*args,**kargs):
+    def driver(logits,y):
+        return torch.nn.functional.kl_div(torch.nn.functional.log_softmax(logits,dim=1), y, reduction='none')
+    return driver
 
 
-def auc_roc(logits,y):
-    return torch.nn.functional.cross_entropy(
-        logits,
-        y,
-        weight=torch.tensor([3.0,1.0],device=logits.device),
-        reduction='none'
-    )
+def auc_roc(weight=None,*args,**kargs):
+    def driver(logits,y,_weight=weight):
+        if(_weight):
+            _weight = torch.tensor(_weight,device=logits.device)
+        return torch.nn.functional.cross_entropy(
+            logits,
+            y,
+            weight=_weight,
+            reduction='none'
+        )
+    return driver
 
 
 class LayerNorm(nn.LayerNorm):
@@ -267,7 +273,11 @@ class Detector(nn.Module):
         self.losses = []
         
         for loss in config.losses:
-            self.losses.append(globals()[loss])
+            if type(loss) == str:
+                self.losses.append(globals()[loss]())
+            else:
+                self.losses.append(globals()[loss.name](**(dict(loss.args) if "args" in loss else {})))
+
 
         if(self.decode_mode == "stride"):
             self.layer_indices = list(range(0,len(self.encoder.transformer.resblocks),config.decode_stride))
