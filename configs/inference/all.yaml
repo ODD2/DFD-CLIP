@@ -2,5 +2,7 @@ data:
   eval:
     - name: Deepfake
       dataset: CDF
+      pack: 1
     - name: Deepfake
       dataset: DFDC
+      pack: 1

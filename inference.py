@@ -68,6 +68,7 @@ def main(args):
     for ds_cfg in config.data.datasets:
         # prepare model and dataset
         model = Detector(config.model, config.data.num_frames, accelerator).to(accelerator.device).eval()
+        ds_cfg.pack = 1
         test_dataset = globals()[ds_cfg.dataset](
             ds_cfg,
             config.data.num_frames,
@@ -76,12 +77,16 @@ def main(args):
             accelerator,
             split='test',
             index=config.target_task,
-            pack=True
         )
         test_dataloader = accelerator.prepare(DataLoader(test_dataset, collate_fn=collate_fn))
         accelerator.print(f'Dataset {test_dataset.__class__.__name__} initialized with {len(test_dataset)} samples\n')
         with accelerator.main_process_first():
-            model.load_state_dict(torch.load(path.join(root, 'best_weights.pt')))
+            if args.weight_mode == "last":
+                model.load_state_dict(torch.load(path.join(root, 'last_weights.pt')))
+            elif(args.weight_mode == "best"):
+                model.load_state_dict(torch.load(path.join(root, 'best_weights.pt')))
+            else:
+                raise NotImplementedError()
         
         if accelerator.is_local_main_process:
             accuracy_calc = evaluate.load("accuracy")
@@ -155,6 +160,12 @@ if __name__ == "__main__":
         "--aux_file",
         type=str,
         default=None,
+    )
+
+    parser.add_argument(
+        "--weight_mode",
+        type=str,
+        default="best",
     )
 
     parser.add_argument(

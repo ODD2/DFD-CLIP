@@ -308,9 +308,10 @@ class FFPP(Dataset):
                 except:
                     continue
                 else:
-                    frames.append(result["frames"])
-                    label.append(result["label"])
-                    mask.append(result["mask"])
+                    for comp in result["frames"].keys():
+                        frames.append(result["frames"][comp])
+                        label.append(result["label"])
+                        mask.append(result["mask"])
             return frames,label,mask,self.index
         elif(self.contrast):
             _, df_type, _, _, _ = self.__video_info(idx)
@@ -726,9 +727,10 @@ class CDF(Dataset):
         C.root_dir = './datasets/cdf/'
         C.dataset = "CDF"
         C.scale = 1.0
+        C.pack = 0
         return C
 
-    def __init__(self, config,num_frames,clip_duration, transform=None, accelerator=None, split="test",index=0,pack=False,*args,**kwargs):
+    def __init__(self, config,num_frames,clip_duration, transform=None, accelerator=None, split="test",index=0,*args,**kwargs):
         assert 0 <= config.scale <= 1
         assert split == "test", f"Split '{split.upper()}' Not Implemented."
 
@@ -739,7 +741,7 @@ class CDF(Dataset):
         self.transform = transform
         self.index = index
         self.scale = config.scale
-        self.pack = pack
+        self.pack = bool(config.pack)
         # available clips per data
         self.video_list = []
 
@@ -917,9 +919,10 @@ class DFDC(Dataset):
         C.root_dir = './datasets/dfdc/'
         C.dataset = "DFDC"
         C.scale = 1.0
+        C.pack = 0
         return C
 
-    def __init__(self, config,num_frames,clip_duration, transform=None, accelerator=None, split="test",index=0,pack=False,*args,**kwargs):
+    def __init__(self, config,num_frames,clip_duration, transform=None, accelerator=None, split="test",index=0,*args,**kwargs):
         assert 0 <= config.scale <= 1
         assert split == "test", f"Split '{split.upper()}' Not Implemented."
 
@@ -930,7 +933,7 @@ class DFDC(Dataset):
         self.transform = transform
         self.index = index
         self.scale = config.scale
-        self.pack = pack
+        self.pack = bool(config.pack)
         # available clips per data
         self.video_list = []
 
