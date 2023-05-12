@@ -5,6 +5,8 @@ import pickle
 import json
 import cv2
 import math
+import traceback
+import logging
 from time import time
 from os import path, scandir, makedirs
 
@@ -15,7 +17,7 @@ from torchvision.io import VideoReader
 from tqdm.auto import tqdm
 from yacs.config import CfgNode as CN
 
-import traceback
+
 
 import pandas as pd
 import heartpy as hp
@@ -23,7 +25,8 @@ import xml.etree.ElementTree as ET
 from glob import glob
 from scipy.signal import resample
 from pyedflib import highlevel as BDFReader
-import logging
+import albumentations as alb
+
 
 class SessionMeta:
     def __init__(self,session_dir,save_gae=False,save_xml=False):
@@ -182,6 +185,7 @@ class FFPP(Dataset):
         C.pack = 0
         C.pair = 0
         C.contrast = 0
+        C.augmentation = "none"
         return C
 
     def __init__(self, config,num_frames,clip_duration, transform=None, accelerator=None, split='train',index=0):
@@ -206,6 +210,7 @@ class FFPP(Dataset):
         self.clip_duration = clip_duration
         self.split = split
         self.transform = transform
+        
         self.index = index
         self.scale = config.scale
         self.pack = bool(config.pack)
@@ -219,6 +224,29 @@ class FFPP(Dataset):
 
         self._build_video_table(accelerator)
         self._build_video_list(accelerator)
+
+        if config.augmentation == "none":
+            self.augmentation = lambda x: x
+        elif config.augmentation == "normal":
+            self._augmentation = alb.Compose(
+                [
+                    alb.RGBShift((-20,20),(-20,20),(-20,20),p=0.3),
+                    alb.HueSaturationValue(hue_shift_limit=(-0.3,0.3), sat_shift_limit=(-0.3,0.3), val_shift_limit=(-0.3,0.3), p=0.3),
+                    alb.RandomBrightnessContrast(brightness_limit=(-0.3,0.3), contrast_limit=(-0.3,0.3), p=0.3),
+                    alb.ImageCompression(quality_lower=40,quality_upper=100,p=0.5),
+                ], 
+                additional_targets={f'_{i}': 'image' for i in range(num_frames)},
+                p=1.
+            )
+            def driver(x):
+                x = [_x.numpy().transpose((1,2,0)) for _x in x]
+                result = self._augmentation(image=x[0],**{f'_{i}': v for i,v in enumerate(x)})
+                x = [result[f'_{i}']  for i in range(len(x))]
+                x = [torch.from_numpy(_x.transpose((2,0,1))) for _x in x]
+                return  x
+            self.augmentation = driver
+        else:
+            raise NotImplementedError
         
     def _build_video_table(self, accelerator):
         self.video_table = {}
@@ -381,9 +409,13 @@ class FFPP(Dataset):
                             _frames.append(frame["data"])
                         except Exception as e:
                             raise Exception(f"unable to read video frame of sample index:{sample_idx}")
-                    _frames = torch.stack(_frames)
                     del vid_reader
+                    # augment the data only while training.
+                    if(self.split == "train"):
+                        _frames = self.augmentation(_frames)
 
+                    # list of numpy frames to torch tensor.
+                    _frames = torch.stack(_frames)
                     # transformation
                     if (self.transform):
                         _frames = self.transform(_frames)
