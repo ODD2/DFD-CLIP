@@ -257,6 +257,7 @@ class Detector(nn.Module):
         C.adapter = CN(new_allowed=True)
         C.adapter.type = "none"
         C.dropout = 0.0
+        C.weight_decay = 0.01
         C.out_dim = []
         C.losses = []
         return C
@@ -270,6 +271,7 @@ class Detector(nn.Module):
 
         self.decode_mode = config.decode_mode
         self.out_dim = config.out_dim
+        self.weight_decay = config.weight_decay
         self.losses = []
         
         for loss in config.losses:
@@ -338,7 +340,8 @@ class Detector(nn.Module):
     def configure_optimizers(self, lr):
         return torch.optim.AdamW(
             params=[i for i in self.parameters() if i.requires_grad], 
-            lr=lr
+            lr=lr,
+            weight_decay=self.weight_decay
         )
 
     def _transform(self, n_px):
