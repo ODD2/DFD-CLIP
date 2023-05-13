@@ -227,17 +227,22 @@ class FFPP(Dataset):
 
         if config.augmentation == "none":
             self.augmentation = lambda x: x
-        elif config.augmentation == "normal":
-            self._augmentation = alb.Compose(
-                [
-                    alb.RGBShift((-20,20),(-20,20),(-20,20),p=0.3),
-                    alb.HueSaturationValue(hue_shift_limit=(-0.3,0.3), sat_shift_limit=(-0.3,0.3), val_shift_limit=(-0.3,0.3), p=0.3),
-                    alb.RandomBrightnessContrast(brightness_limit=(-0.3,0.3), contrast_limit=(-0.3,0.3), p=0.3),
-                    alb.ImageCompression(quality_lower=40,quality_upper=100,p=0.5),
-                ], 
-                additional_targets={f'_{i}': 'image' for i in range(num_frames)},
-                p=1.
-            )
+        else:
+            if config.augmentation == "normal":
+                self._augmentation = alb.Compose(
+                    [
+                        alb.RGBShift((-20,20),(-20,20),(-20,20),p=0.3),
+                        alb.HueSaturationValue(hue_shift_limit=(-0.3,0.3), sat_shift_limit=(-0.3,0.3), val_shift_limit=(-0.3,0.3), p=0.3),
+                        alb.RandomBrightnessContrast(brightness_limit=(-0.3,0.3), contrast_limit=(-0.3,0.3), p=0.3),
+                        alb.ImageCompression(quality_lower=40,quality_upper=100,p=0.5),
+                        alb.Flip()
+                    ], 
+                    additional_targets={f'_{i}': 'image' for i in range(num_frames)},
+                    p=1.
+                )
+            else:
+                raise NotImplementedError
+            
             def driver(x):
                 x = [_x.numpy().transpose((1,2,0)) for _x in x]
                 result = self._augmentation(image=x[0],**{f'_{i}': v for i,v in enumerate(x)})
@@ -245,8 +250,6 @@ class FFPP(Dataset):
                 x = [torch.from_numpy(_x.transpose((2,0,1))) for _x in x]
                 return  x
             self.augmentation = driver
-        else:
-            raise NotImplementedError
         
     def _build_video_table(self, accelerator):
         self.video_table = {}
