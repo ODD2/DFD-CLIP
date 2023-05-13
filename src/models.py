@@ -191,6 +191,7 @@ class Decoder(nn.Module):
         self.class_embedding = nn.Parameter(scale * torch.randn(width))
         self.positional_embedding = nn.Parameter(scale * torch.randn(num_frames, 1, heads, width // heads))
         self.ln_pre = LayerNorm(width)
+        self.drop_pre = torch.nn.Dropout(config.dropout)
         self.transformer = Transformer(
             width,
             heads,
@@ -201,6 +202,7 @@ class Decoder(nn.Module):
             ],
         )
         self.ln_post = LayerNorm(width)
+        self.drop_post = torch.nn.Dropout(config.dropout)
         self.projections  = []
 
         for i,output_dim in enumerate(output_dims):
@@ -219,9 +221,9 @@ class Decoder(nn.Module):
         ]
         
         x = self.class_embedding.view(1, 1, -1).repeat(kvs[0]['k'].size(0), 1, 1)
-        x = self.ln_pre(x)
+        x = self.ln_pre(self.drop_pre(x))
         x = self.transformer(x, kvs, m)
-        x = self.ln_post(x)
+        x = self.ln_post(self.drop_post(x))
         x = x.squeeze(1)
         x = [x @ projection for projection in self.projections]
 
@@ -377,7 +379,8 @@ class CompInvAdapter(nn.Module):
                             torch.nn.Linear(width,inner_dim,bias=False),
                             torch.nn.GELU(),
                             torch.nn.LayerNorm(inner_dim),
-                            torch.nn.Linear(inner_dim,width,bias=False)
+                            torch.nn.Linear(inner_dim,width,bias=False),
+                            torch.nn.Dropout(config.dropout)
                         )
                     )
                 elif(config.adapter.struct.type == "768-bn"):
@@ -386,7 +389,8 @@ class CompInvAdapter(nn.Module):
                         _name,
                         torch.nn.Sequential(
                             torch.nn.Linear(768,768,bias=False),
-                            torch.nn.BatchNorm2d(num_frames)
+                            torch.nn.BatchNorm2d(num_frames),
+                            torch.nn.Dropout(config.dropout)
                         )
                     )
                 else:
