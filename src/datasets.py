@@ -388,6 +388,16 @@ class FFPP(Dataset):
                         else:
                             vid_path = vid_path.replace(comp,target_comp)
                     
+                    # augment the data only while training.
+                    if(self.split == "train"):
+                        # the slow motion factor for video data augmentation                
+                        video_speed_factor = random.random()*0.5 + 0.5
+                        video_shift_factor = random.random() * (1-video_speed_factor)
+                    else:
+                        video_speed_factor = 1
+                        video_shift_factor = 0
+                    logging.debug(f"Video Speed Motion Factor: {video_speed_factor}")
+                    logging.debug(f"Video Shift Factor: {video_shift_factor}")
                     
                     vid_reader = torchvision.io.VideoReader(
                         vid_path, 
@@ -396,9 +406,9 @@ class FFPP(Dataset):
                     # - frames per second
                     video_sample_freq = vid_reader.get_metadata()["video"]["fps"][0]
                     # - the amount of frames to skip
-                    video_sample_offset = int(video_offset_duration)
+                    video_sample_offset = int(video_offset_duration+self.clip_duration * video_shift_factor)
                     # - the amount of frames for the duration of a clip
-                    video_clip_samples = int(video_sample_freq * self.clip_duration)
+                    video_clip_samples = int(video_sample_freq * self.clip_duration*video_speed_factor)
                     # - the amount of frames to skip in order to meet the num_frames per clip.(excluding the head & tail frames )
                     video_sample_stride = ((video_clip_samples-1) / (self.num_frames - 1))/video_sample_freq
                     logging.debug(f"Loading Video: {video_meta['path']}")
