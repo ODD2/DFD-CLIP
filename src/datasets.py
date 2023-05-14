@@ -228,8 +228,12 @@ class FFPP(Dataset):
         if config.augmentation == "none":
             self.augmentation = lambda x: x
         else:
-            if config.augmentation == "normal":
-                self._augmentation = alb.Compose(
+            self.frame_augmentation = None
+            self.sequence_augmentation = None
+            config.augmentation = config.augmentation.split('+')
+
+            if "normal" in config.augmentation:
+                self.sequence_augmentation = alb.Compose(
                     [
                         alb.RGBShift((-20,20),(-20,20),(-20,20),p=0.3),
                         alb.HueSaturationValue(hue_shift_limit=(-0.3,0.3), sat_shift_limit=(-0.3,0.3), val_shift_limit=(-0.3,0.3), p=0.3),
@@ -240,15 +244,35 @@ class FFPP(Dataset):
                     additional_targets={f'_{i}': 'image' for i in range(num_frames)},
                     p=1.
                 )
-            else:
-                raise NotImplementedError
+
+            if "frame" in  config.augmentation:
+                self.frame_augmentation = alb.Compose(
+                    [
+                        alb.RGBShift((-10,10),(-10,10),(-10,10),p=0.3),
+                        alb.HueSaturationValue(hue_shift_limit=(-0.15,0.15), sat_shift_limit=(-0.15,0.15), val_shift_limit=(-0.15,0.15), p=0.3),
+                        alb.RandomBrightnessContrast(brightness_limit=(-0.15,0.15), contrast_limit=(-0.15,0.15), p=0.3),
+                        alb.ImageCompression(quality_lower=70,quality_upper=100,p=0.5)
+                    ], 
+                    p=1.0
+                )
+
+            if(self.frame_augmentation == None and self.sequence_augmentation == None):
+                raise NotImplementedError()
             
             def driver(x):
+                # transform to numpy, the alb required format
                 x = [_x.numpy().transpose((1,2,0)) for _x in x]
-                result = self._augmentation(image=x[0],**{f'_{i}': v for i,v in enumerate(x)})
-                x = [result[f'_{i}']  for i in range(len(x))]
+                # frame augmentation 
+                if(not self.frame_augmentation == None):
+                    x = [self.frame_augmentation(image=_x)["image"] for _x in x]
+                # sequence augmentation
+                if(not self.sequence_augmentation == None):
+                    result = self.sequence_augmentation(image=x[0],**{f'_{i}': v for i,v in enumerate(x)})
+                    x = [result[f'_{i}']  for i in range(len(x))]
+                # revert to tensor
                 x = [torch.from_numpy(_x.transpose((2,0,1))) for _x in x]
                 return  x
+
             self.augmentation = driver
         
     def _build_video_table(self, accelerator):
@@ -449,6 +473,7 @@ class FFPP(Dataset):
                     "frames":frames,
                     "label": 0 if df_type == "REAL" else 1,
                     "mask":mask,
+                    "speed": video_speed_factor
                 }
             except Exception as e:
                 logging.error(f"Error occur: {e}")
