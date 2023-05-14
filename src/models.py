@@ -1,3 +1,5 @@
+from math import comb
+from itertools import combinations
 from collections import OrderedDict
 
 from yacs.config import CfgNode as CN
@@ -12,7 +14,6 @@ def mse(logits,y):
         2
     )
     return value / 1000
-
 
 
 def kl_div(*args,**kargs):
@@ -224,11 +225,10 @@ class Decoder(nn.Module):
         x = self.ln_pre(self.drop_pre(x))
         x = self.transformer(x, kvs, m)
         x = self.ln_post(self.drop_post(x))
-        x = x.squeeze(1)
-        x = [x @ projection for projection in self.projections]
+        video_feature = x.squeeze(1)
+        task_logits = [video_feature @ projection for projection in self.projections]
 
-        return x
-
+        return task_logits, video_feature
 
 def disable_gradients(module: nn.Module):
     for params in module.parameters():
@@ -304,10 +304,14 @@ class Detector(nn.Module):
                 self.adapter.load_state_dict(data)
                 if(config.adapter.frozen):
                     self.adapter = disable_gradients(self.adapter)
-            
+
+        # transformations
         self.transform = self._transform(self.encoder.input_resolution)
+
+        # trainable parameters
+        # self.speed_margin_param = torch.nn.Parameter(torch.tensor(0.1),requires_grad=True)
         
-    def predict(self, x, m):
+    def predict(self, x, m, features=False):
         b, t, c, h, w = x.shape
         with torch.no_grad():
             # get key and value from each CLIP ViT layer
@@ -320,25 +324,43 @@ class Detector(nn.Module):
         if self.adapter:
             kvs = self.adapter(kvs)
 
-        task_logits = self.decoder(kvs, m)
+        task_logits,video_features = self.decoder(kvs, m)
 
         for i in range(len(task_logits)):
             logits_l2_distance = torch.norm(task_logits[i],dim=-1,keepdim=True)
             task_logits[i] = 5 * task_logits[i] / (logits_l2_distance + 1e-10)
 
-        return task_logits
+        if(not features):
+            return task_logits
+        else:
+            return task_logits, video_features
 
-    def forward(self, x, y, m, single_task=None,*args,**kargs):
-        
-        task_logits = self.predict(x, m)
+    def forward(self, x, y, m, c, s, single_task=None,*args,**kargs):
+        b = x.shape[0]
+        task_logits, video_features = self.predict(x, m,features=True)
         
         task_losses = [
             loss_fn(logits, labels) if single_task==None or i == single_task else 0
             for i, loss_fn,logits,labels in zip(range(len(self.losses)),self.losses,task_logits,y)
         ]
 
-        return task_losses, task_logits
+        # relative ranking for video speed
+        speed_rank_index = torch.argsort(s).tolist()
+        margin_rounds = min(comb(b,3),10)
+        _combinations = iter(combinations(range(b),3))
+        speed_loss = torch.tensor(0.0,device=x.device)
+        for _ in range(margin_rounds):
+            b_index = next(_combinations)
+            b_index = sorted(b_index,key=lambda _i:speed_rank_index.index(_i))
+            speed_loss += torch.nn.functional.triplet_margin_loss(
+                anchor=video_features[b_index[0]],
+                positive=video_features[b_index[1]],
+                negative=video_features[b_index[2]],
+                margin=(s[b_index[2]]-s[b_index[1]])*10
+            )
 
+        return task_losses, task_logits, speed_loss
+        
     def configure_optimizers(self, lr):
         return torch.optim.AdamW(
             params=[i for i in self.parameters() if i.requires_grad], 

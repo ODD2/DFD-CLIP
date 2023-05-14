@@ -132,8 +132,8 @@ class Trainer(_Trainer):
 
                 
                 # forward and calculate the loss
-                task_losses, task_logits = self.model(
-                    *batch[:3],
+                task_losses, task_logits, speed_loss = self.model(
+                    *batch[:5],
                     single_task=(task_index if not self.teaching else None)
                 )
 
@@ -141,14 +141,15 @@ class Trainer(_Trainer):
                 # the loss from the model is should not to be reduced
                 # so the duplicate samples can be detected
                 if(self.teaching):
-                    self.accelerator.backward(sum([loss.mean() for loss in task_losses]))
+                    self.accelerator.backward(sum([loss.mean() for loss in task_losses])+speed_loss)
                 else:
-                    self.accelerator.backward(task_losses[task_index].mean())
+                    self.accelerator.backward(task_losses[task_index].mean()+speed_loss)
 
                 # cache output artifacts
                 self.batch_losses[name] = task_losses[task_index].detach()
                 self.batch_logits[name] = task_logits[task_index].detach()
                 self.batch_labels[name] = batch[1][task_index].detach()
+                self.batch_losses["speed"] = speed_loss.detach()
             
             self.optimizer.step()
             self.lr_scheduler.step()
