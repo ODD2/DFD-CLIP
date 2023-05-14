@@ -239,7 +239,7 @@ class FFPP(Dataset):
                         alb.HueSaturationValue(hue_shift_limit=(-0.3,0.3), sat_shift_limit=(-0.3,0.3), val_shift_limit=(-0.3,0.3), p=0.3),
                         alb.RandomBrightnessContrast(brightness_limit=(-0.3,0.3), contrast_limit=(-0.3,0.3), p=0.3),
                         alb.ImageCompression(quality_lower=40,quality_upper=100,p=0.5),
-                        alb.Flip()
+                        alb.HorizontalFlip()
                     ], 
                     additional_targets={f'_{i}': 'image' for i in range(num_frames)},
                     p=1.
@@ -358,6 +358,7 @@ class FFPP(Dataset):
             frames = []
             label = []
             mask = []
+            speed = []
             for i in range(start,end):
                 try:
                     result = self.get_dict(idx)
@@ -368,7 +369,8 @@ class FFPP(Dataset):
                         frames.append(result["frames"][comp])
                         label.append(result["label"])
                         mask.append(result["mask"])
-            return frames,label,mask,self.index
+                        speed.append(result["speed"])
+            return frames,label,mask,speed,self.index
         elif(self.contrast):
             _, df_type, _, _, _ = self.__video_info(idx)
             main_label = (not df_type == "REAL")
@@ -377,10 +379,10 @@ class FFPP(Dataset):
             result = []
             result.append(self.get_dict(main_idx,target_label=main_label))
             result.append(self.get_dict(auxi_idx,target_label=(not main_label)))
-            return *[[ _r[name] for _r in result] for name in ["frames","label","mask"] ] , [self.index]*2
+            return *[[ _r[name] for _r in result] for name in ["frames","label","mask","speed"] ] , [self.index]*2
         else:
             result = self.get_dict(idx)
-            return result["frames"],result["label"],result["mask"],self.index
+            return result["frames"],result["label"],result["mask"],result["speed"],self.index
 
     def get_dict(self,idx,block=False,target_label=None):
         while(True):
@@ -487,30 +489,32 @@ class FFPP(Dataset):
         return video_idx, *self.video_list[video_idx]
 
     def collate_fn(self,batch):
-        _frames,_label,_mask,_index = list(zip(*batch))
+        _frames,_label,_mask,_speed,_index = list(zip(*batch))
         
         if(self.contrast):
             _frames = [i for l in _frames for i in l]
             _label = [i for l in _label for i in l]
             _mask = [i for l in _mask for i in l]
             _index = [i for l in _index for i in l]
+            _speed = [i for l in _speed for i in l]
         
-        _comps = list(_frames[0].keys())
         num_vids = len(_frames)
-        num_comps = len(_comps)
+        num_comps = len(_frames[0].keys())
         frames = []
+        comps = []
         
         for _frame in _frames:
-            for comp in _comps:
-                frames.append(_frame[comp])
+            for comp, clip in _frame.items():
+                frames.append(clip)
+                comps.append(comp)
         
         frames = torch.stack(frames)
-        label = torch.tensor(_label).repeat_interleave(num_comps,dim=0)
         mask = torch.stack(_mask).repeat_interleave(num_comps,dim=0)
+        label = torch.tensor(_label).repeat_interleave(num_comps,dim=0)
         index = torch.tensor(_index).repeat_interleave(num_comps,dim=0)
-        comps = _comps*num_vids
+        speed = torch.tensor(_speed).repeat_interleave(num_comps,dim=0)
         
-        return [frames,label,mask,comps,index]
+        return [frames,label,mask,comps,speed,index]
 
 class RPPG(Dataset):
     @staticmethod
