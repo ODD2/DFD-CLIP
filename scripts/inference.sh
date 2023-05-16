@@ -1,0 +1,1 @@
+python -m inference $1 --batch_size=16

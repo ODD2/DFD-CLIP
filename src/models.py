@@ -358,7 +358,7 @@ class Detector(nn.Module):
             return task_losses, task_logits
         
         elif self.train_mode.type == "normal":
-            return task_losses, task_logits
+            return task_losses, task_logits, {}
         
         elif self.train_mode.type == "temporal_ranking":
             speed_rank_index = torch.argsort(s,descending=True).tolist()
@@ -381,7 +381,7 @@ class Detector(nn.Module):
                 )
 
             speed_loss = torch.cat(rank_losses).mean()
-            return task_losses, task_logits, 0.05*speed_loss
+            return task_losses, task_logits, {"speed/rank":0.05*speed_loss}
         
         elif self.train_mode.type == "temporal_triplet":
             speed_rank_index = torch.argsort(s,descending=True).tolist()
@@ -408,7 +408,7 @@ class Detector(nn.Module):
                     margin=(s[b_index[1]]-s[b_index[0]])
                 )
 
-            return task_losses, task_logits, 0.01*speed_loss/margin_rounds/2
+            return task_losses, task_logits, {"speed/triplet":0.01*speed_loss/margin_rounds/2}
         else:
             raise NotImplementedError()
         

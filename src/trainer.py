@@ -132,7 +132,7 @@ class Trainer(_Trainer):
 
                 
                 # forward and calculate the loss
-                task_losses, task_logits, speed_loss = self.model(
+                task_losses, task_logits, other_losses = self.model(
                     *batch[:5],
                     train=True,
                     single_task=(task_index if not self.teaching else None)
@@ -142,15 +142,23 @@ class Trainer(_Trainer):
                 # the loss from the model is should not to be reduced
                 # so the duplicate samples can be detected
                 if(self.teaching):
-                    self.accelerator.backward(sum([loss.mean() for loss in task_losses])+speed_loss)
+                    self.accelerator.backward(
+                        sum([loss.mean() for loss in task_losses]) + 
+                        sum([other_losses[lname].mean() for lname in other_losses.keys()])
+                    )
                 else:
-                    self.accelerator.backward(task_losses[task_index].mean()+speed_loss)
+                    self.accelerator.backward(
+                        task_losses[task_index].mean()+
+                        sum([other_losses[lname].mean() for lname in other_losses.keys()])
+                    )
 
                 # cache output artifacts
                 self.batch_losses[name] = task_losses[task_index].detach()
                 self.batch_logits[name] = task_logits[task_index].detach()
                 self.batch_labels[name] = batch[1][task_index].detach()
-                self.batch_losses["speed"] = speed_loss.detach()
+                # cache auxiliary losses
+                for _k, _v in other_losses:
+                    self.batch_losses[_k] = _v.detach().mean()
             
             self.optimizer.step()
             self.lr_scheduler.step()
@@ -176,9 +184,6 @@ class Trainer(_Trainer):
                 return
 
             # self.trigger_callbacks('on_epoch_end')
-
-
-
 
 class CompInvTrainer(_Trainer):
     '''
