@@ -152,7 +152,7 @@ class Trainer(_Trainer):
                         sum([other_losses[lname].mean() for lname in other_losses.keys()])
                     )
 
-                # cache output artifacts
+                # cache output task artifacts
                 self.batch_losses[name] = task_losses[task_index].detach()
                 self.batch_logits[name] = task_logits[task_index].detach()
                 self.batch_labels[name] = batch[1][task_index].detach()
@@ -171,7 +171,7 @@ class Trainer(_Trainer):
 
             self.steps += 1
 
-            # activate teaching process 
+            # activate teaching process while reaching designated step
             if(self.mode == "teacher" and not self.teaching and self.config.teach_at < self.steps):
                 self.teaching = True
             

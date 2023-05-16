@@ -1,4 +1,5 @@
 import random
+import logging
 from math import comb
 from itertools import combinations
 from collections import OrderedDict
@@ -313,7 +314,9 @@ class Detector(nn.Module):
                 self.adapter.load_state_dict(data)
                 if(config.adapter.frozen):
                     self.adapter = disable_gradients(self.adapter)
-
+            else:
+                logging.info("Adapter operates without pretrained weights!!!")
+        
         # transformations
         self.transform = self._transform(self.encoder.input_resolution)
 
@@ -331,6 +334,7 @@ class Detector(nn.Module):
 
             kvs = [kvs[i] for i in self.layer_indices]
 
+        # TODO: record the kvs before adaptation, for future learning on e2e compression invariant training.
         if self.adapter:
             kvs = self.adapter(kvs)
 
@@ -346,8 +350,9 @@ class Detector(nn.Module):
             return task_logits, video_features
 
     def forward(self, x, y, m, c=None, s=None, train=False,single_task=None,*args,**kargs):
-        b = x.shape[0]
-        task_logits, video_features = self.predict(x, m,features=True)
+        b, t, c, h, w = x.shape
+        
+        task_logits, video_features = self.predict(x, m, features=True)
         
         task_losses = [
             loss_fn(logits, labels) if single_task==None or i == single_task else 0
@@ -381,34 +386,41 @@ class Detector(nn.Module):
                 )
 
             speed_loss = torch.cat(rank_losses).mean()
-            return task_losses, task_logits, {"speed/rank":0.05*speed_loss}
+            speed_loss = 0.05*speed_loss
+
+            return task_losses, task_logits, {"speed/rank": speed_loss}
         
         elif self.train_mode.type == "temporal_triplet":
             speed_rank_index = torch.argsort(s,descending=True).tolist()
             speed_loss = torch.tensor(0.0,device=x.device)
 
             margin_rounds = min(comb(b,3),10)
+            
             indices = list(range(b))
             random.shuffle(indices)
+
             _combinations = iter(combinations(indices,3))
             
             for _ in range(margin_rounds):
                 b_index = next(_combinations)
                 b_index = sorted(b_index,key=lambda _i:speed_rank_index.index(_i))
+                
                 speed_loss += torch.nn.functional.triplet_margin_loss(
                     anchor=video_features[b_index[0]],
                     positive=video_features[b_index[1]],
                     negative=video_features[b_index[2]],
-                    margin=(s[b_index[2]]-s[b_index[1]])
+                    margin=torch.abs(s[b_index[2]]-s[b_index[1]])
                 )
                 speed_loss += torch.nn.functional.triplet_margin_loss(
                     anchor=video_features[b_index[2]],
                     positive=video_features[b_index[1]],
                     negative=video_features[b_index[0]],
-                    margin=(s[b_index[1]]-s[b_index[0]])
+                    margin=torch.abs(s[b_index[1]]-s[b_index[0]])
                 )
+                
+            speed_loss = 0.01 * speed_loss/(margin_rounds*2)
 
-            return task_losses, task_logits, {"speed/triplet":0.01*speed_loss/margin_rounds/2}
+            return task_losses, task_logits, {"speed/triplet":speed_loss}
         else:
             raise NotImplementedError()
         

@@ -203,7 +203,6 @@ class FFPP(Dataset):
         self.category = config.category.lower()
         self.name = config.name.lower()
         self.root = path.expanduser(config.root_dir)
-        self.detection_level = config.detection_level
         self.types = config.types
         self.compressions = config.compressions
         self.num_frames = num_frames
@@ -361,8 +360,9 @@ class FFPP(Dataset):
             speed = []
             for i in range(start,end):
                 try:
-                    result = self.get_dict(i)
+                    result = self.get_dict(i,block=True)
                 except:
+                    logging.warn(f"Cannot fetch clip for item index:{i}")
                     continue
                 else:
                     for comp in result["frames"].keys():
@@ -417,7 +417,7 @@ class FFPP(Dataset):
                     # augment the data only while training.
                     if(self.split == "train"):
                         # the slow motion factor for video data augmentation                
-                        video_speed_factor = random.random()*0.5 + 0.5
+                        video_speed_factor = random.random() * 0.5 + 0.5
                         video_shift_factor = random.random() * (1-video_speed_factor)
                     else:
                         video_speed_factor = 1
@@ -453,8 +453,9 @@ class FFPP(Dataset):
                     if(self.split == "train"):
                         _frames = self.augmentation(_frames)
 
-                    # list of numpy frames to torch tensor.
+                    # stack list of torch frames to tensor
                     _frames = torch.stack(_frames)
+
                     # transformation
                     if (self.transform):
                         _frames = self.transform(_frames)
@@ -917,8 +918,9 @@ class CDF(Dataset):
             mask = []
             for i in range(start,end):
                 try:
-                    result = self.get_dict(i)
+                    result = self.get_dict(i,block=True)
                 except:
+                    logging.warn(f"Cannot fetch clip for item index:{i}")
                     continue
                 else:
                     frames.append(result["frames"])
@@ -1112,8 +1114,9 @@ class DFDC(Dataset):
             mask = []
             for i in range(start,end):
                 try:
-                    result = self.get_dict(i)
+                    result = self.get_dict(i,block=True)
                 except:
+                    logging.warn(f"Cannot fetch clip for item index:{i}")
                     continue
                 else:
                     frames.append(result["frames"])
