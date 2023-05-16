@@ -44,6 +44,9 @@ def get_config(cfg_file,args):
     if args.test:
         for cfg in C.data.datasets:
             cfg.scale = 0.1
+    else:
+        for cfg in C.data.datasets:
+            cfg.scale = 1.0
 
     # model
     C.model = Detector.get_default_config().merge_from_other_cfg(preset.model)
@@ -87,7 +90,7 @@ def main(args):
             "label":[],
             "prob":[]
         }
-        test_dataloader = accelerator.prepare(DataLoader(test_dataset, collate_fn=collate_fn))
+        test_dataloader = accelerator.prepare(DataLoader(test_dataset,num_workers=args.num_workers, collate_fn=collate_fn))
         accelerator.print(f'Dataset {test_dataset.__class__.__name__} initialized with {len(test_dataset)} samples\n')
         with accelerator.main_process_first():
             model.load_state_dict(torch.load(path.join(root, f'{args.weight_mode}_weights.pt')))
@@ -98,18 +101,19 @@ def main(args):
 
         N = args.batch_size
         progress_bar = tqdm(test_dataloader, disable=not accelerator.is_local_main_process)
-        for clips, label, masks,task_index in progress_bar:
+        for data in progress_bar:
+            clips, label, masks,task_index = *data[:3],data[-1]
             logits = []
             for i in range(0, len(clips), N):
                 logits.append(
                     model.predict(
-                    torch.stack(clips[i:i+N]).to(accelerator.device),
-                    torch.stack(masks[i:i+N]).to(accelerator.device)
-                )[task_index].detach().to("cpu")
-            )
-            label = torch.tensor(label, device="cpu")
-
+                        torch.stack(clips[i:i+N]).to(accelerator.device),
+                        torch.stack(masks[i:i+N]).to(accelerator.device)
+                    )[task_index].detach().to("cpu")
+                )
+           
             p = torch.cat(logits).softmax(dim=-1)
+
             # means = p.mean(dim=0)
 
             # # ensemble option 1: greedly take the most confident score
@@ -122,15 +126,24 @@ def main(args):
             # ensemble option 3: just use the mean
             # pred_prob = means[None]
 
-            pred_prob = p
+            
 
-            pred_label = pred_prob.argmax(dim=-1)
+            if(args.modality == "clip"):
+                pred_prob = p    
+                pred_label = pred_prob.argmax(dim=-1)
+                label = torch.tensor(label, device="cpu")
+            elif(args.modality == "video"):
+                pred_prob = p.mean(dim=0).unsqueeze(0)
+                pred_label = pred_prob.argmax(dim=-1).unsqueeze(0)
+                label = torch.tensor(label[0], device="cpu").unsqueeze(0)
+            else:
+                raise NotImplementedError()
 
             # sync across process
             pred_probs, pred_labels, labels = accelerator.gather_for_metrics(
                 (pred_prob, pred_label, label)
             )
-
+            
             stats[ds_cfg.name]["label"] += labels.tolist()
             stats[ds_cfg.name]["prob"] += pred_probs[:,1].tolist()
 
@@ -140,6 +153,8 @@ def main(args):
                 roc_auc_calc.add_batch(references=labels, prediction_scores=pred_probs[:, 1]) # prob of real class
 
         if accelerator.is_local_main_process:
+            accuracy_calc.add_batch(references=[0,1], predictions=[0,1])
+            roc_auc_calc.add_batch(references=[0,1], prediction_scores=[0,1]) # prob of real class
             accuracy = accuracy_calc.compute()['accuracy']
             roc_auc = roc_auc_calc.compute()['roc_auc']
             print(f'accuracy: {accuracy}, roc_auc: {roc_auc}')
@@ -180,6 +195,18 @@ if __name__ == "__main__":
         "--weight_mode",
         type=str,
         default="best",
+    )
+
+    parser.add_argument(
+        "--modality",
+        type=str,
+        default="clip"
+    )
+
+    parser.add_argument(
+        "--num_workers",
+        type=int,
+        default=8
     )
 
     parser.add_argument(

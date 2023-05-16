@@ -248,10 +248,10 @@ class FFPP(Dataset):
             if "frame" in  config.augmentation:
                 self.frame_augmentation = alb.Compose(
                     [
-                        alb.RGBShift((-10,10),(-10,10),(-10,10),p=0.3),
-                        alb.HueSaturationValue(hue_shift_limit=(-0.15,0.15), sat_shift_limit=(-0.15,0.15), val_shift_limit=(-0.15,0.15), p=0.3),
-                        alb.RandomBrightnessContrast(brightness_limit=(-0.15,0.15), contrast_limit=(-0.15,0.15), p=0.3),
-                        alb.ImageCompression(quality_lower=70,quality_upper=100,p=0.5)
+                        alb.RGBShift((-5,5),(-5,5),(-5,5),p=0.3),
+                        alb.HueSaturationValue(hue_shift_limit=(-0.05,0.05), sat_shift_limit=(-0.05,0.05), val_shift_limit=(-0.05,0.05), p=0.3),
+                        alb.RandomBrightnessContrast(brightness_limit=(-0.05,0.05), contrast_limit=(-0.05,0.05), p=0.3),
+                        alb.ImageCompression(quality_lower=80,quality_upper=100,p=0.5)
                     ], 
                     p=1.0
                 )
@@ -361,7 +361,7 @@ class FFPP(Dataset):
             speed = []
             for i in range(start,end):
                 try:
-                    result = self.get_dict(idx)
+                    result = self.get_dict(i)
                 except:
                     continue
                 else:
@@ -917,7 +917,7 @@ class CDF(Dataset):
             mask = []
             for i in range(start,end):
                 try:
-                    result = self.get_dict(idx)
+                    result = self.get_dict(i)
                 except:
                     continue
                 else:
@@ -1112,7 +1112,7 @@ class DFDC(Dataset):
             mask = []
             for i in range(start,end):
                 try:
-                    result = self.get_dict(idx)
+                    result = self.get_dict(i)
                 except:
                     continue
                 else:

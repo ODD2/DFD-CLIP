@@ -1,3 +1,4 @@
+import random
 from math import comb
 from itertools import combinations
 from collections import OrderedDict
@@ -33,6 +34,12 @@ def auc_roc(weight=None,*args,**kargs):
             reduction='none'
         )
     return driver
+
+
+def disable_gradients(module: nn.Module):
+    for params in module.parameters():
+        params.requires_grad = False
+    return module
 
 
 class LayerNorm(nn.LayerNorm):
@@ -230,11 +237,6 @@ class Decoder(nn.Module):
 
         return task_logits, video_feature
 
-def disable_gradients(module: nn.Module):
-    for params in module.parameters():
-        params.requires_grad = False
-    return module
-
 
 class Detector(nn.Module):
     """
@@ -256,12 +258,17 @@ class Detector(nn.Module):
         C.decode_mode = "stride"
         C.decode_stride = 2
         C.decode_indices = []
-        C.adapter = CN(new_allowed=True)
-        C.adapter.type = "none"
-        C.dropout = 0.0
-        C.weight_decay = 0.01
         C.out_dim = []
         C.losses = []
+        # adapter configurations
+        C.adapter = CN(new_allowed=True)
+        C.adapter.type = "none"
+        # training configurations
+        C.train_mode = CN(new_allowed=True)
+        C.train_mode.type = "normal"
+        # regularization
+        C.dropout = 0.0
+        C.weight_decay = 0.01
         return C
 
     def __init__(self, config, num_frames, accelerator):
@@ -274,7 +281,9 @@ class Detector(nn.Module):
         self.decode_mode = config.decode_mode
         self.out_dim = config.out_dim
         self.weight_decay = config.weight_decay
+        self.train_mode = config.train_mode
         self.losses = []
+        
         
         for loss in config.losses:
             if type(loss) == str:
@@ -309,7 +318,8 @@ class Detector(nn.Module):
         self.transform = self._transform(self.encoder.input_resolution)
 
         # trainable parameters
-        # self.speed_margin_param = torch.nn.Parameter(torch.tensor(0.1),requires_grad=True)
+        if(self.train_mode.type == "temporal_ranking"):
+            self.ranking_transform_param = nn.Parameter((self.encoder.width**-0.5) * torch.randn(self.encoder.width, 1),requires_grad=True)
         
     def predict(self, x, m, features=False):
         b, t, c, h, w = x.shape
@@ -335,7 +345,7 @@ class Detector(nn.Module):
         else:
             return task_logits, video_features
 
-    def forward(self, x, y, m, c, s, single_task=None,*args,**kargs):
+    def forward(self, x, y, m, c=None, s=None, train=False,single_task=None,*args,**kargs):
         b = x.shape[0]
         task_logits, video_features = self.predict(x, m,features=True)
         
@@ -344,22 +354,63 @@ class Detector(nn.Module):
             for i, loss_fn,logits,labels in zip(range(len(self.losses)),self.losses,task_logits,y)
         ]
 
-        # relative ranking for video speed
-        speed_rank_index = torch.argsort(s).tolist()
-        margin_rounds = min(comb(b,3),10)
-        _combinations = iter(combinations(range(b),3))
-        speed_loss = torch.tensor(0.0,device=x.device)
-        for _ in range(margin_rounds):
-            b_index = next(_combinations)
-            b_index = sorted(b_index,key=lambda _i:speed_rank_index.index(_i))
-            speed_loss += torch.nn.functional.triplet_margin_loss(
-                anchor=video_features[b_index[0]],
-                positive=video_features[b_index[1]],
-                negative=video_features[b_index[2]],
-                margin=(s[b_index[2]]-s[b_index[1]])*10
-            )
+        if not train:
+            return task_losses, task_logits
+        
+        elif self.train_mode.type == "normal":
+            return task_losses, task_logits
+        
+        elif self.train_mode.type == "temporal_ranking":
+            speed_rank_index = torch.argsort(s,descending=True).tolist()
+            speed_loss = torch.tensor(0.0,device=x.device)
 
-        return task_losses, task_logits, speed_loss
+            rank_logits = (video_features @ self.ranking_transform_param ).squeeze()
+            rank_losses = []
+
+            for rank in range(0,b-1):
+                input1 = rank_logits[speed_rank_index[rank]].repeat(b-1-rank)
+                input2 = rank_logits[speed_rank_index[rank+1:],...]
+                target = torch.ones(b-1-rank,device=x.device)
+                rank_losses.append(
+                    torch.nn.functional.margin_ranking_loss(
+                        input1,
+                        input2,
+                        target,
+                        reduction="none"
+                    )
+                )
+
+            speed_loss = torch.cat(rank_losses).mean()
+            return task_losses, task_logits, 0.05*speed_loss
+        
+        elif self.train_mode.type == "temporal_triplet":
+            speed_rank_index = torch.argsort(s,descending=True).tolist()
+            speed_loss = torch.tensor(0.0,device=x.device)
+
+            margin_rounds = min(comb(b,3),10)
+            indices = list(range(b))
+            random.shuffle(indices)
+            _combinations = iter(combinations(indices,3))
+            
+            for _ in range(margin_rounds):
+                b_index = next(_combinations)
+                b_index = sorted(b_index,key=lambda _i:speed_rank_index.index(_i))
+                speed_loss += torch.nn.functional.triplet_margin_loss(
+                    anchor=video_features[b_index[0]],
+                    positive=video_features[b_index[1]],
+                    negative=video_features[b_index[2]],
+                    margin=(s[b_index[2]]-s[b_index[1]])
+                )
+                speed_loss += torch.nn.functional.triplet_margin_loss(
+                    anchor=video_features[b_index[2]],
+                    positive=video_features[b_index[1]],
+                    negative=video_features[b_index[0]],
+                    margin=(s[b_index[1]]-s[b_index[0]])
+                )
+
+            return task_losses, task_logits, 0.01*speed_loss/margin_rounds/2
+        else:
+            raise NotImplementedError()
         
     def configure_optimizers(self, lr):
         return torch.optim.AdamW(

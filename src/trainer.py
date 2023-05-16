@@ -134,6 +134,7 @@ class Trainer(_Trainer):
                 # forward and calculate the loss
                 task_losses, task_logits, speed_loss = self.model(
                     *batch[:5],
+                    train=True,
                     single_task=(task_index if not self.teaching else None)
                 )
 

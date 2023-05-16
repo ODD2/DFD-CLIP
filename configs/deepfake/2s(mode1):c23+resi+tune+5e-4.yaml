@@ -1,5 +1,5 @@
 data:
-  clip_duration: 2
+  clip_duration: 10
   eval:
   - compressions:
     - c23
@@ -13,7 +13,7 @@ data:
     types:
     - REAL
     - NT
-
+  
   - category: Deepfake
     name: DFDC
     scale: 0.1
@@ -22,7 +22,7 @@ data:
     name: CDF
     scale: 0.6
 
-  num_frames: 20
+  num_frames: 50
   train:
   - compressions:
     - c23
@@ -31,8 +31,6 @@ data:
     name: FFPP
     pack: 0
     pair: 0
-    augmentation: "normal+frame"
-    contrast: 1
     root_dir: ./datasets/ffpp/
     scale: 1.0
     types:
@@ -40,9 +38,8 @@ data:
     - DF
     - FS
     - F2F
-
 evaluator:
-  batch_size: 24
+  batch_size: 10
   metrics:
   - name: deepfake/ffpp
     types:
@@ -61,7 +58,6 @@ evaluator:
 
   name: Evaluator
   num_workers: 8
-
 model:
   adapter:
     frozen: 0
@@ -74,40 +70,36 @@ model:
   decode_indices: []
   decode_mode: stride
   decode_stride: 2
-  dropout: 0.5
-  weight_decay: 0.05
+  dropout: 0.0
   losses:
   - auc_roc
   name: Detector
   out_dim:
   - 2
-
 system:
   deterministic_training: true
-  evaluation_interval: 300
+  evaluation_interval: 100
   mixed_precision: 'no'
   seed: 0
   training_eval_interval: 10
-
 tracking:
   compare_fn: max
   default_project_prefix: version
   directory: logs/deepfake
   enabled: true
-  main_metric: deepfake/ffpp/roc_auc
+  main_metric: roc_auc
   project_name: deepfake
   tool: wandb
-
 trainer:
-  batch_size: 12
+  batch_size: 8
   ema_ratio: 0.999
-  learning_rate: 0.00005
+  learning_rate: 0.0005
   max_steps: 3000
   metrics:
   - name: deepfake/ffpp
     types:
     - accuracy
-    - roc_auc                  
+    - roc_auc
   mode: normal
   name: Trainer
   num_workers: 8

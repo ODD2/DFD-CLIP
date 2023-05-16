@@ -13,7 +13,7 @@ data:
     types:
     - REAL
     - NT
-
+  
   - category: Deepfake
     name: DFDC
     scale: 0.1
@@ -75,7 +75,7 @@ model:
   decode_mode: stride
   decode_stride: 2
   dropout: 0.5
-  weight_decay: 0.05
+  weight_decay: 0.3
   losses:
   - auc_roc
   name: Detector

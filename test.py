@@ -1,13 +1,25 @@
-from src.datasets import DFDC,FFPP
+# # initialize accelerator and trackers (if enabled)
+from os import makedirs,path,scandir
+import pickle
+import cv2
+import json
+from yacs.config import CfgNode as CN
+from torch.utils.data import Dataset
+from tqdm import tqdm
+import logging
+import random
+import torch
+# from src.datasets import FFPP,RPPG
 from accelerate import Accelerator
-# x = FFPP(FFPP.get_default_config(),50,10,lambda x: x, Accelerator(),split="test",pack=True)
-# x[44]
-# DFDC.get_default_config().merge_from_other_cfg(FFPP.get_default_config())
-from main import get_config,Detector,Accelerator
-class A:
+from main import get_config,init_accelerator,set_seed,FFPP
+logging.basicConfig(level="DEBUG")
+
+class Obj:
     pass
-a = A()
-a.test = False
-a.cfg = "/home/od/Desktop/repos/dfd-clip/configs/mix.yaml"
-cfg = get_config(a)
-Detector(cfg.model,50,Accelerator())
+c = FFPP.get_default_config()
+c.augmentation.mode = "normal"
+accelerator =  Accelerator(mixed_precision='no')
+x = FFPP(c,10,2,lambda x: x,accelerator,split="train")
+
+frames,label,mask,_ = x.get_dict(10,block=True)
+(len(frames),label,len(mask))

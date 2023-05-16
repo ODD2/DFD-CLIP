@@ -17,12 +17,12 @@ data:
   - category: Deepfake
     name: DFDC
     scale: 0.1
-      
+    
   - category: Deepfake
     name: CDF
     scale: 0.6
 
-  num_frames: 20
+  num_frames: 10
   train:
   - compressions:
     - c23
@@ -31,8 +31,7 @@ data:
     name: FFPP
     pack: 0
     pair: 0
-    augmentation: "normal+frame"
-    contrast: 1
+    contrast: 0
     root_dir: ./datasets/ffpp/
     scale: 1.0
     types:
@@ -41,8 +40,9 @@ data:
     - FS
     - F2F
 
+
 evaluator:
-  batch_size: 24
+  batch_size: 48
   metrics:
   - name: deepfake/ffpp
     types:
@@ -66,25 +66,29 @@ model:
   adapter:
     frozen: 0
     path: /home/od/Desktop/repos/dfd-clip/logs/comp-inv/comp-inv/mode1+256+resi+1e-2/last_weights.pt
-    type: pretrain
     struct:
       type: 768-x-768
       x: 256
+    type: pretrain
   architecture: ViT-B/16
   decode_indices: []
   decode_mode: stride
   decode_stride: 2
-  dropout: 0.5
-  weight_decay: 0.05
+  dropout: 0.0
+  weight_decay: 0.3
   losses:
-  - auc_roc
+  - name: auc_roc
+    args:
+      weight: 
+        - 2.0
+        - 1.0
   name: Detector
   out_dim:
   - 2
 
 system:
   deterministic_training: true
-  evaluation_interval: 300
+  evaluation_interval: 100
   mixed_precision: 'no'
   seed: 0
   training_eval_interval: 10
@@ -99,7 +103,7 @@ tracking:
   tool: wandb
 
 trainer:
-  batch_size: 12
+  batch_size: 48
   ema_ratio: 0.999
   learning_rate: 0.00005
   max_steps: 3000
@@ -107,7 +111,7 @@ trainer:
   - name: deepfake/ffpp
     types:
     - accuracy
-    - roc_auc                  
+    - roc_auc
   mode: normal
   name: Trainer
   num_workers: 8

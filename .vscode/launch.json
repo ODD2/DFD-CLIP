@@ -13,6 +13,8 @@
                 "--cfg",
                 // "configs/comp-inv-encoder/deepfake.yaml",
                 "configs/deepfake/test.yaml",
+                // "configs/deepfake/config.yaml",
+                // "configs/deepfake/2s(mode1):c23+resi+tune+dbal+5e-5.yaml",
                 "--test"
             ],
             "justMyCode": false
@@ -38,10 +40,12 @@
             "request": "launch",
             "module": "inference",
             "args": [
-                "/home/od/Desktop/repos/dfd-clip/logs/deepfake/deepfake/2s(mode1):c23+resi+tune+5e-4+ce_w",
-                "--test",
-                "--aux_file",
-                "/home/od/Desktop/repos/dfd-clip/configs/inference/all.yaml"
+                "/home/od/Desktop/repos/dfd-clip/logs/test/0515T0724",
+                "--modality",
+                "video"
+                // "--test",
+                // "--aux_file",
+                // "/home/od/Desktop/repos/dfd-clip/configs/inference/all.yaml"
             ],
             "justMyCode": false
         },
