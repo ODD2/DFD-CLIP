@@ -157,7 +157,7 @@ class Trainer(_Trainer):
                 self.batch_logits[name] = task_logits[task_index].detach()
                 self.batch_labels[name] = batch[1][task_index].detach()
                 # cache auxiliary losses
-                for _k, _v in other_losses:
+                for _k, _v in other_losses.items():
                     self.batch_losses[_k] = _v.detach().mean()
             
             self.optimizer.step()
