@@ -109,7 +109,7 @@ def main(args):
                     model.predict(
                         torch.stack(clips[i:i+N]).to(accelerator.device),
                         torch.stack(masks[i:i+N]).to(accelerator.device)
-                    )[task_index].detach().to("cpu")
+                    )[0][task_index].detach().to("cpu")
                 )
            
             p = torch.cat(logits).softmax(dim=-1)

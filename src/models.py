@@ -43,6 +43,10 @@ def disable_gradients(module: nn.Module):
     return module
 
 
+def kvs_to_device(kvs,device):
+    return [{k:v.to(device) for k,v in _kv.items()} for _kv in kvs]
+
+
 class LayerNorm(nn.LayerNorm):
     """
     Subclass torch's LayerNorm to handle fp16.
@@ -303,19 +307,21 @@ class Detector(nn.Module):
         
         if(config.adapter.type == "none"):
             self.adapter = None
-        else:
+        elif(config.adapter.type== "normal"):
             self.adapter = CompInvAdapter(config,self,num_frames=num_frames)
-            if(config.adapter.type == "pretrain"):
-                data = torch.load(config.adapter.path)
-                data = {
-                    '.'.join(k.split('.')[1:]): v  for k,v in  data.items() if "adapter"  in k
-                }
-                self.adapter.load_state_dict(data)
-                if(config.adapter.frozen):
-                    self.adapter = disable_gradients(self.adapter)
-            else:
-                logging.info("Adapter operates without pretrained weights!!!")
-        
+            logging.info("Adapter operates without pretrained weights!!!")
+        elif(config.adapter.type == "pretrain"):
+            self.adapter = CompInvAdapter(config,self,num_frames=num_frames)
+            data = torch.load(config.adapter.path)
+            data = {
+                '.'.join(k.split('.')[1:]): v  for k,v in  data.items() if "adapter"  in k
+            }
+            self.adapter.load_state_dict(data)
+            if(config.adapter.frozen):
+                self.adapter = disable_gradients(self.adapter)
+            logging.info(f"Adapter operates with pretrained weights:{config.adapter.path}")
+        else:
+            raise NotImplementedError()
         # transformations
         self.transform = self._transform(self.encoder.input_resolution)
 
@@ -338,7 +344,9 @@ class Detector(nn.Module):
 
         # TODO: record the kvs before adaptation, for future learning on e2e compression invariant training.
         if self.adapter:
-            _kvs = kvs
+            if(with_adapt_features):
+                # _kvs = kvs_to_device(kvs,"cpu")
+                _kvs = kvs
             kvs = self.adapter(kvs)
 
         task_logits,video_features = self.decoder(kvs, m)
@@ -367,10 +375,14 @@ class Detector(nn.Module):
         device = x.device
         b, t, c, h, w = x.shape
         
-        task_logits, features = self.predict(x, m, video_features=True, adapt_features=True)
+        task_logits, features = self.predict(
+            x,
+            m,
+            with_video_features=True,
+            with_adapt_features=((not self.adapter == None) and ("compression" in self.train_mode))
+        )
 
         video_features = features["video"]
-        adapt_features = features["adapt"]
         
         task_losses = [
             loss_fn(logits, labels) if single_task==None or i == single_task else 0
@@ -384,7 +396,9 @@ class Detector(nn.Module):
 
         # compression related losses
         if "compression" in self.train_mode:
-            _kvs, kvs = adapt_features["_kvs"],adapt_features["kvs"]
+            adapt_features = features["adapt"]
+            _kvs = adapt_features["_kvs"]
+            kvs = adapt_features["kvs"]
 
             _l = len(self.layer_indices)
             _b,_t,_p,_h,_d =  kvs[0]['k'].shape 
@@ -406,10 +420,10 @@ class Detector(nn.Module):
 
                 for layer in range(_l):
                     for subject in ["k","v"]:
-                        if self.train_mode.compression == "mode0":
+                        if self.train_mode.compression == "recon+match":
                             recon_diff += torch.abs(_kvs[layer][subject][raw_i] - kvs[layer][subject][raw_i])
                             match_diff += torch.abs(kvs[layer][subject][raw_i] - kvs[layer][subject][c23_i])
-                        elif self.train_mode.compression == "mode1":
+                        elif self.train_mode.compression == "match":
                             match_diff += torch.abs(_kvs[layer][subject][raw_i] - kvs[layer][subject][c23_i])
                         else:
                             raise NotImplementedError()
@@ -481,7 +495,6 @@ class Detector(nn.Module):
    
         return task_losses, task_logits, other_losses
     
-
     def configure_optimizers(self, lr):
         return torch.optim.AdamW(
             params=[i for i in self.parameters() if i.requires_grad], 
