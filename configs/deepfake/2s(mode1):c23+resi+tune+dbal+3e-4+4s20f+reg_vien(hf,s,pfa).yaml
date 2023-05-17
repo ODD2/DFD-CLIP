@@ -1,5 +1,5 @@
 data:
-  clip_duration: 5
+  clip_duration: 4
   eval:
   - augmentation: none
     category: Deepfake
@@ -78,7 +78,7 @@ model:
   name: Detector
   out_dim:
   - 2
-  weight_decay: 0.05
+  weight_decay: 0.01
 system:
   deterministic_training: true
   evaluation_interval: 300
@@ -96,7 +96,7 @@ tracking:
 trainer:
   batch_size: 12
   ema_ratio: 0.999
-  learning_rate: 5.0e-05
+  learning_rate: 0.0003
   max_steps: 3000
   metrics:
   - name: deepfake/ffpp

@@ -1,5 +1,5 @@
 data:
-  clip_duration: 5
+  clip_duration: 4
   eval:
   - augmentation: none
     category: Deepfake
@@ -79,6 +79,8 @@ model:
   out_dim:
   - 2
   weight_decay: 0.05
+  train_mode: 
+    type: temporal_ranking
 system:
   deterministic_training: true
   evaluation_interval: 300
