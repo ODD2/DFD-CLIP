@@ -264,9 +264,8 @@ class Detector(nn.Module):
         # adapter configurations
         C.adapter = CN(new_allowed=True)
         C.adapter.type = "none"
-        # training configurations
+        # training mode configurations
         C.train_mode = CN(new_allowed=True)
-        C.train_mode.type = "normal"
         # regularization
         C.dropout = 0.0
         C.weight_decay = 0.01
@@ -321,10 +320,13 @@ class Detector(nn.Module):
         self.transform = self._transform(self.encoder.input_resolution)
 
         # trainable parameters
-        if(self.train_mode.type == "temporal_ranking"):
-            self.ranking_transform_param = nn.Parameter((self.encoder.width**-0.5) * torch.randn(self.encoder.width, 1),requires_grad=True)
+        if("temporal" in self.train_mode and self.train_mode.temporal == "ranking"):
+            self.ranking_transform_param = nn.Parameter(
+                (self.encoder.width**-0.5) * torch.randn(self.encoder.width, 1),
+                requires_grad=True
+            )
         
-    def predict(self, x, m, features=False):
+    def predict(self, x, m, with_video_features=False,with_adapt_features=False):
         b, t, c, h, w = x.shape
         with torch.no_grad():
             # get key and value from each CLIP ViT layer
@@ -336,6 +338,7 @@ class Detector(nn.Module):
 
         # TODO: record the kvs before adaptation, for future learning on e2e compression invariant training.
         if self.adapter:
+            _kvs = kvs
             kvs = self.adapter(kvs)
 
         task_logits,video_features = self.decoder(kvs, m)
@@ -344,15 +347,30 @@ class Detector(nn.Module):
             logits_l2_distance = torch.norm(task_logits[i],dim=-1,keepdim=True)
             task_logits[i] = 5 * task_logits[i] / (logits_l2_distance + 1e-10)
 
-        if(not features):
-            return task_logits
-        else:
-            return task_logits, video_features
+        features = {}
+        
+        if with_video_features:
+            features["video"] = video_features
+
+        if with_adapt_features:
+            if(self.adapter):
+                features["adapt"] = {
+                    "before": _kvs,
+                    "after": kvs
+                }
+            else:
+                raise Exception("cannot return adaptive features without an adapter")
+
+        return task_logits, features
 
     def forward(self, x, y, m, c=None, s=None, train=False,single_task=None,*args,**kargs):
+        device = x.device
         b, t, c, h, w = x.shape
         
-        task_logits, video_features = self.predict(x, m, features=True)
+        task_logits, features = self.predict(x, m, video_features=True, adapt_features=True)
+
+        video_features = features["video"]
+        adapt_features = features["adapt"]
         
         task_losses = [
             loss_fn(logits, labels) if single_task==None or i == single_task else 0
@@ -361,69 +379,109 @@ class Detector(nn.Module):
 
         if not train:
             return task_losses, task_logits
+
+        other_losses = {}
+
+        # compression related losses
+        if "compression" in self.train_mode:
+            _kvs, kvs = adapt_features["_kvs"],adapt_features["kvs"]
+
+            _l = len(self.layer_indices)
+            _b,_t,_p,_h,_d =  kvs[0]['k'].shape 
+            _w = _b//2
+
+            recon_loss = torch.tensor(0.0,device=device)
+            match_loss = torch.tensor(0.0,device=device)
+
+            recon_diff = torch.zeros((_t,_p,_h,_d),device=device)
+            match_diff = torch.zeros((_t,_p,_h,_d),device=device)
+            
+            for i in range(_w):
+                if(c[i*2] == "raw"):
+                    raw_i = i*2
+                    c23_i = i*2+1
+                else:
+                    raw_i = i*2+1
+                    c23_i = i*2
+
+                for layer in range(_l):
+                    for subject in ["k","v"]:
+                        if self.train_mode.compression == "mode0":
+                            recon_diff += torch.abs(_kvs[layer][subject][raw_i] - kvs[layer][subject][raw_i])
+                            match_diff += torch.abs(kvs[layer][subject][raw_i] - kvs[layer][subject][c23_i])
+                        elif self.train_mode.compression == "mode1":
+                            match_diff += torch.abs(_kvs[layer][subject][raw_i] - kvs[layer][subject][c23_i])
+                        else:
+                            raise NotImplementedError()
         
-        elif self.train_mode.type == "normal":
-            return task_losses, task_logits, {}
-        
-        elif self.train_mode.type == "temporal_ranking":
+            recon_loss = torch.norm((recon_diff/(_w * _l *  2)).view((_p,_t,-1)).mean(dim=1))/_p
+            match_loss = torch.norm((match_diff/(_w * _l *  2)).view((_p,_t,-1)).mean(dim=1))/_p
+
+            other_losses["recon"] = recon_loss
+            other_losses["match"] = match_loss
+
+        # temporal related losses
+        if "temporal" in self.train_mode:
             speed_rank_index = torch.argsort(s,descending=True).tolist()
             speed_loss = torch.tensor(0.0,device=x.device)
 
-            rank_logits = (video_features @ self.ranking_transform_param ).squeeze()
-            rank_losses = []
+            if self.train_mode.temporal == "ranking":
+                rank_logits = (video_features @ self.ranking_transform_param ).squeeze()
+                rank_losses = []
 
-            for rank in range(0,b-1):
-                input1 = rank_logits[speed_rank_index[rank]].repeat(b-1-rank)
-                input2 = rank_logits[speed_rank_index[rank+1:],...]
-                target = torch.ones(b-1-rank,device=x.device)
-                rank_losses.append(
-                    torch.nn.functional.margin_ranking_loss(
-                        input1,
-                        input2,
-                        target,
-                        reduction="none"
+                for rank in range(0,b-1):
+                    input1 = rank_logits[speed_rank_index[rank]].repeat(b-1-rank)
+                    input2 = rank_logits[speed_rank_index[rank+1:],...]
+                    target = torch.ones(b-1-rank,device=x.device)
+                    rank_losses.append(
+                        torch.nn.functional.margin_ranking_loss(
+                            input1,
+                            input2,
+                            target,
+                            reduction="none"
+                        )
                     )
-                )
 
-            speed_loss = torch.cat(rank_losses).mean()
-            speed_loss = 0.05*speed_loss
+                speed_loss = torch.cat(rank_losses).mean()
+                speed_loss = 0.05*speed_loss
 
-            return task_losses, task_logits, {"speed/rank": speed_loss}
-        
-        elif self.train_mode.type == "temporal_triplet":
-            speed_rank_index = torch.argsort(s,descending=True).tolist()
-            speed_loss = torch.tensor(0.0,device=x.device)
+                other_losses["speed/rank"] =  speed_loss
 
-            margin_rounds = min(comb(b,3),10)
+            elif self.train_mode.temporal == "triplet":
+                margin_rounds = min(comb(b,3),10)
             
-            indices = list(range(b))
-            random.shuffle(indices)
+                indices = list(range(b))
+                random.shuffle(indices)
 
-            _combinations = iter(combinations(indices,3))
-            
-            for _ in range(margin_rounds):
-                b_index = next(_combinations)
-                b_index = sorted(b_index,key=lambda _i:speed_rank_index.index(_i))
+                _combinations = iter(combinations(indices,3))
                 
-                speed_loss += torch.nn.functional.triplet_margin_loss(
-                    anchor=video_features[b_index[0]],
-                    positive=video_features[b_index[1]],
-                    negative=video_features[b_index[2]],
-                    margin=torch.abs(s[b_index[2]]-s[b_index[1]])
-                )
-                speed_loss += torch.nn.functional.triplet_margin_loss(
-                    anchor=video_features[b_index[2]],
-                    positive=video_features[b_index[1]],
-                    negative=video_features[b_index[0]],
-                    margin=torch.abs(s[b_index[1]]-s[b_index[0]])
-                )
-                
-            speed_loss = 0.01 * speed_loss/(margin_rounds*2)
+                for _ in range(margin_rounds):
+                    b_index = next(_combinations)
+                    b_index = sorted(b_index,key=lambda _i:speed_rank_index.index(_i))
+                    
+                    speed_loss += torch.nn.functional.triplet_margin_loss(
+                        anchor=video_features[b_index[0]],
+                        positive=video_features[b_index[1]],
+                        negative=video_features[b_index[2]],
+                        margin=torch.abs(s[b_index[2]]-s[b_index[1]])
+                    )
+                    speed_loss += torch.nn.functional.triplet_margin_loss(
+                        anchor=video_features[b_index[2]],
+                        positive=video_features[b_index[1]],
+                        negative=video_features[b_index[0]],
+                        margin=torch.abs(s[b_index[1]]-s[b_index[0]])
+                    )
 
-            return task_losses, task_logits, {"speed/triplet":speed_loss}
-        else:
-            raise NotImplementedError()
-        
+                speed_loss = 0.01 * speed_loss/(margin_rounds*2)
+
+                other_losses["speed/triplet"] = speed_loss
+
+            else:
+                raise NotImplementedError()
+   
+        return task_losses, task_logits, other_losses
+    
+
     def configure_optimizers(self, lr):
         return torch.optim.AdamW(
             params=[i for i in self.parameters() if i.requires_grad], 
