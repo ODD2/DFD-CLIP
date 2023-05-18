@@ -371,7 +371,7 @@ class Detector(nn.Module):
 
         return task_logits, features
 
-    def forward(self, x, y, m, c=None, s=None, train=False,single_task=None,*args,**kargs):
+    def forward(self, x, y, m, comp=None, speed=None, train=False,single_task=None,*args,**kargs):
         device = x.device
         b, t, c, h, w = x.shape
         
@@ -397,8 +397,8 @@ class Detector(nn.Module):
         # compression related losses
         if "compression" in self.train_mode:
             adapt_features = features["adapt"]
-            _kvs = adapt_features["_kvs"]
-            kvs = adapt_features["kvs"]
+            _kvs = kvs_to_device(adapt_features["before"],device)
+            kvs = kvs_to_device(adapt_features["after"],device)
 
             _l = len(self.layer_indices)
             _b,_t,_p,_h,_d =  kvs[0]['k'].shape 
@@ -411,7 +411,7 @@ class Detector(nn.Module):
             match_diff = torch.zeros((_t,_p,_h,_d),device=device)
             
             for i in range(_w):
-                if(c[i*2] == "raw"):
+                if(comp[i*2] == "raw"):
                     raw_i = i*2
                     c23_i = i*2+1
                 else:
@@ -436,7 +436,7 @@ class Detector(nn.Module):
 
         # temporal related losses
         if "temporal" in self.train_mode:
-            speed_rank_index = torch.argsort(s,descending=True).tolist()
+            speed_rank_index = torch.argsort(speed,descending=True).tolist()
             speed_loss = torch.tensor(0.0,device=x.device)
 
             if self.train_mode.temporal == "ranking":
@@ -477,13 +477,13 @@ class Detector(nn.Module):
                         anchor=video_features[b_index[0]],
                         positive=video_features[b_index[1]],
                         negative=video_features[b_index[2]],
-                        margin=torch.abs(s[b_index[2]]-s[b_index[1]])
+                        margin=torch.abs(speed[b_index[2]]-speed[b_index[1]])
                     )
                     speed_loss += torch.nn.functional.triplet_margin_loss(
                         anchor=video_features[b_index[2]],
                         positive=video_features[b_index[1]],
                         negative=video_features[b_index[0]],
-                        margin=torch.abs(s[b_index[1]]-s[b_index[0]])
+                        margin=torch.abs(speed[b_index[1]]-speed[b_index[0]])
                     )
 
                 speed_loss = 0.01 * speed_loss/(margin_rounds*2)
