@@ -342,11 +342,7 @@ class Detector(nn.Module):
 
             kvs = [kvs[i] for i in self.layer_indices]
 
-        # TODO: record the kvs before adaptation, for future learning on e2e compression invariant training.
         if self.adapter:
-            if(with_adapt_features):
-                # _kvs = kvs_to_device(kvs,"cpu")
-                _kvs = kvs
             kvs = self.adapter(kvs)
 
         task_logits,video_features = self.decoder(kvs, m)
@@ -360,14 +356,10 @@ class Detector(nn.Module):
         if with_video_features:
             features["video"] = video_features
 
-        if with_adapt_features:
-            if(self.adapter):
-                features["adapt"] = {
-                    "before": _kvs,
-                    "after": kvs
-                }
-            else:
-                raise Exception("cannot return adaptive features without an adapter")
+        if with_adapt_features and self.adapter:
+            features["adapt"] = kvs
+        else:
+            raise Exception("cannot return adaptive features without an adapter")
 
         return task_logits, features
 
@@ -396,10 +388,7 @@ class Detector(nn.Module):
 
         # compression related losses
         if "compression" in self.train_mode:
-            adapt_features = features["adapt"]
-            _kvs = kvs_to_device(adapt_features["before"],device)
-            kvs = kvs_to_device(adapt_features["after"],device)
-
+            kvs = features["adapt"]
             _l = len(self.layer_indices)
             _b,_t,_p,_h,_d =  kvs[0]['k'].shape 
             _w = _b//2
@@ -420,16 +409,13 @@ class Detector(nn.Module):
 
                 for layer in range(_l):
                     for subject in ["k","v"]:
-                        if self.train_mode.compression == "recon+match":
-                            recon_diff += torch.abs(_kvs[layer][subject][raw_i] - kvs[layer][subject][raw_i])
+                        if self.train_mode.compression == "sync":
                             match_diff += torch.abs(kvs[layer][subject][raw_i] - kvs[layer][subject][c23_i])
-                        elif self.train_mode.compression == "match":
-                            match_diff += torch.abs(_kvs[layer][subject][raw_i] - kvs[layer][subject][c23_i])
                         else:
                             raise NotImplementedError()
         
-            recon_loss = torch.norm((recon_diff/(_w * _l *  2)).view((_p,_t,-1)).mean(dim=1))/_p
-            match_loss = torch.norm((match_diff/(_w * _l *  2)).view((_p,_t,-1)).mean(dim=1))/_p
+            recon_loss = torch.norm((recon_diff/(_w * _l *  2)).view((-1,_h*_d)).mean(dim=0))
+            match_loss = torch.norm((match_diff/(_w * _l *  2)).view((-1,_h*_d)).mean(dim=0))
 
             other_losses["recon"] = recon_loss
             other_losses["match"] = match_loss
@@ -535,6 +521,8 @@ class CompInvAdapter(nn.Module):
                             torch.nn.Linear(width,inner_dim,bias=False),
                             torch.nn.GELU(),
                             torch.nn.LayerNorm(inner_dim),
+                            torch.nn.Dropout(config.dropout/5),
+
                             torch.nn.Linear(inner_dim,width,bias=False),
                             torch.nn.Dropout(config.dropout)
                         )
@@ -549,6 +537,26 @@ class CompInvAdapter(nn.Module):
                             torch.nn.Dropout(config.dropout)
                         )
                     )
+                elif(config.adapter.struct.type == "768-xxx-768"):
+                    inner_dim = int(config.adapter.struct.x)
+                    setattr(
+                        self,
+                        _name,
+                        torch.nn.Sequential(
+                            torch.nn.Linear(width,inner_dim,bias=False),
+                            torch.nn.GELU(),
+                            torch.nn.LayerNorm(inner_dim),
+                            torch.nn.Dropout(config.dropout/5),
+
+                            torch.nn.Linear(inner_dim,inner_dim,bias=False),
+                            torch.nn.GELU(),
+                            torch.nn.LayerNorm(inner_dim),
+                            torch.nn.Dropout(config.dropout/5),
+
+                            torch.nn.Linear(inner_dim,width,bias=False),
+                            torch.nn.Dropout(config.dropout)
+                        )
+                    )
                 else:
                     raise NotImplemented()
             
@@ -560,7 +568,7 @@ class CompInvAdapter(nn.Module):
         # perform compression invariant transformation, per layer per key has it's transform matrix
         kvs = [
             {
-                k: (self.layer_blocks[i][k](v.view((b,t,p,-1)))).view((b,t,p,h,d)) + v for k, v in kv.items()
+                k: v + (self.layer_blocks[i][k](v.view((b,t,p,-1)))).view((b,t,p,h,d))  for k, v in kv.items()
             }
             for i,kv in enumerate(kvs)
         ]
