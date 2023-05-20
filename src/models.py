@@ -396,11 +396,14 @@ class Detector(nn.Module):
             recon_loss = torch.tensor(0.0, device=device)
             match_loss = torch.tensor(0.0, device=device)
 
-            recon_diff = torch.zeros((_t, _p, _h, _d), device=device)
-            match_diff = torch.zeros((_t, _p, _h, _d), device=device)
+            #######################################################
+            # recon_diff = torch.zeros((_t, _p, _h, _d), device=device)
+            # match_diff = torch.zeros((_t, _p, _h, _d), device=device)
+            #######################################################
+            # _source_feat = []
+            # _target_feat = []
+            #######################################################
 
-            _source_feat = []
-            _target_feat = []
             for i in range(_w):
 
                 if (comp[i * 2] == "raw"):
@@ -413,17 +416,23 @@ class Detector(nn.Module):
                 for layer in range(_l):
                     for subject in ["k", "v"]:
                         if self.train_mode.compression == "sync":
+
+                            #######################################################
                             # match_diff += torch.abs(kvs[layer][subject][raw_i] - kvs[layer][subject][c23_i])
                             #######################################################
                             # _source_feat.append(kvs[layer][subject][c23_i])
                             # _target_feat.append(kvs[layer][subject][raw_i])
+                            #######################################################
+
                             match_loss += torch.nn.functional.mse_loss(
                                 kvs[layer][subject][c23_i],
                                 kvs[layer][subject][raw_i]
                             ) / (_w * _l * 2)
+
                         else:
                             raise NotImplementedError()
 
+            #######################################################
             # recon_loss = torch.norm((recon_diff/(_w * _l *  2)).view((-1,_h*_d)).mean(dim=0))
             # match_loss = torch.norm((match_diff/(_w * _l *  2)).view((-1,_h*_d)).mean(dim=0))
             #######################################################
@@ -431,15 +440,16 @@ class Detector(nn.Module):
             #     torch.nn.functional.mse_loss(_s, _t) / len(_source_feat)
             #     for _s, _t in zip(_source_feat, _target_feat)
             # ])
+            #######################################################
 
             other_losses["recon"] = recon_loss
-            other_losses["match"] = 5 * match_loss
+            other_losses["match"] = match_loss
 
-        if "nerf_raw" in self.train_mode and self.train_mode.nerf_raw == 1:
+        if "nerf_raw" in self.train_mode:
             for i in range(len(task_losses)):
                 for j in range(_b):
                     if comp[j] == "raw":
-                        task_losses[i][j] *= 0.01
+                        task_losses[i][j] *= self.train_mode.nerf_raw
 
         # temporal related losses
         if "temporal" in self.train_mode:

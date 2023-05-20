@@ -1,85 +1,110 @@
-tracking:
-  enabled: true
-  project_name: deepfake
-  directory: logs/deepfake
-
-model:
-  name: Detector
-  out_dim: 
-    - 2
-  losses:
-    - auc_roc
-  adapter:
-    type: pretrain
-    frozen: 0
-    path: /home/od/Desktop/repos/dfd-clip/logs/comp-inv/comp-inv/mode1+256+resi+1e-2/last_weights.pt
-    struct:
-      type: "768-x-768"
-      x: 256
 data:
   clip_duration: 5
-  num_frames: 25
-  train:
-    - category: Deepfake
-      name: FFPP
-      compressions: 
-        - "c23"
-      types:
-        - "REAL"
-        - "DF"
-        - "FS"
-        - "F2F"
   eval:
-    - category: Deepfake
-      name: FFPP
-      compressions: 
-        - "c23"
-      types:
-        - "REAL"
-        - "NT"
-
-    - category: Deepfake
-      name: DFDC
-      scale: 0.1
-      
-    - category: Deepfake
-      name: CDF
-      scale: 0.6
-
-trainer:
-  name: Trainer
-  batch_size: 8
-  learning_rate: 0.0005
-  max_steps: 3000
-  num_workers: 8
-  metrics:
-    - name: deepfake/ffpp
-      types:
-        - accuracy
-        - roc_auc
-
+  - augmentation: none
+    category: Deepfake
+    compressions:
+    - c23
+    contrast: 0
+    detection_level: video
+    name: FFPP
+    pack: 0
+    pair: 0
+    root_dir: ./datasets/ffpp/
+    scale: 1.0
+    types:
+    - REAL
+    - NT
+  # - category: Deepfake
+  #   name: DFDC
+  #   pack: 0
+  #   root_dir: ./datasets/dfdc/
+  #   scale: 0.1
+  # - category: Deepfake
+  #   name: CDF
+  #   pack: 0
+  #   root_dir: ./datasets/cdf/
+  #   scale: 0.6
+  num_frames: 20
+  train:
+  - augmentation: normal+frame
+    category: Deepfake
+    compressions:
+    - c23
+    contrast: 1
+    detection_level: video
+    name: FFPP
+    pack: 0
+    pair: 1
+    root_dir: ./datasets/ffpp/
+    scale: 1.0
+    types:
+    - REAL
+    - DF
+    - FS
+    - F2F
 evaluator:
-  name: Evaluator
-  batch_size: 10
-  num_workers: 8
+  batch_size: 24
   metrics:
-    - name: deepfake/ffpp
-      types:
-        - accuracy
-        - roc_auc
-        
-    - name: deepfake/cdf
-      types:
-        - accuracy
-        - roc_auc
-
-    - name: deepfake/dfdc
-      types:
-        - accuracy
-        - roc_auc
-
+  - name: deepfake/ffpp
+    types:
+    - accuracy
+    - roc_auc
+  # - name: deepfake/cdf
+  #   types:
+  #   - accuracy
+  #   - roc_auc
+  # - name: deepfake/dfdc
+  #   types:
+  #   - accuracy
+  #   - roc_auc
+  name: Evaluator
+  num_workers: 8
+model:
+  adapter:
+    frozen: 0
+    struct:
+      type: 768-x-768
+      x: 256
+    type: normal
+  architecture: ViT-B/16
+  decode_indices: []
+  decode_mode: stride
+  decode_stride: 2
+  dropout: 0.5
+  losses:
+  - auc_roc
+  name: Detector
+  out_dim:
+  - 2
+  weight_decay: 0.05
+  train_mode:
+    compression: sync
 system:
   deterministic_training: true
+  evaluation_interval: 500
+  mixed_precision: 'no'
+  seed: 0
   training_eval_interval: 10
-  evaluation_interval: 300
-
+tracking:
+  compare_fn: max
+  default_project_prefix: version
+  directory: logs/deepfake
+  enabled: true
+  main_metric: deepfake/ffpp/roc_auc
+  project_name: deepfake
+  tool: wandb
+trainer:
+  batch_size: 5
+  ema_ratio: 0.999
+  learning_rate: 5.0e-04
+  max_steps: 3000
+  metrics:
+  - name: deepfake/ffpp
+    types:
+    - accuracy
+    - roc_auc
+  mode: normal
+  name: Trainer
+  num_workers: 8
+  teach_at: 50
