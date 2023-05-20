@@ -424,9 +424,14 @@ class Detector(nn.Module):
                             # _target_feat.append(kvs[layer][subject][raw_i])
                             #######################################################
 
-                            match_loss += torch.nn.functional.mse_loss(
-                                kvs[layer][subject][c23_i],
-                                kvs[layer][subject][raw_i]
+                            # match_loss += torch.nn.functional.mse_loss(
+                            #     kvs[layer][subject][c23_i],
+                            #     kvs[layer][subject][raw_i]
+                            # ) / (_w * _l * 2)
+                            match_loss += torch.nn.functional.kl_div(
+                                torch.log_softmax(kvs[layer][subject][c23_i], dim=-1),
+                                torch.log_softmax(kvs[layer][subject][raw_i], dim=-1),
+                                log_target=True
                             ) / (_w * _l * 2)
 
                         else:
@@ -558,6 +563,34 @@ class CompInvAdapter(nn.Module):
                             torch.nn.Dropout(config.dropout)
                         )
                     )
+                elif (config.adapter.struct.type == "legacy-768-x-768"):
+                    inner_dim = int(config.adapter.struct.x)
+                    setattr(
+                        self,
+                        _name,
+                        torch.nn.Sequential(
+                            torch.nn.Linear(width, inner_dim, bias=False),
+                            torch.nn.GELU(),
+                            torch.nn.LayerNorm(inner_dim),
+                            torch.nn.Linear(inner_dim, width, bias=False),
+                            torch.nn.Dropout(config.dropout)
+                        )
+                    )
+                elif (config.adapter.struct.type == "768-x-768-nln"):
+                    inner_dim = int(config.adapter.struct.x)
+                    setattr(
+                        self,
+                        _name,
+                        torch.nn.Sequential(
+                            torch.nn.Linear(width, inner_dim, bias=False),
+                            torch.nn.LayerNorm((num_frames, 196, inner_dim)),
+                            torch.nn.GELU(),
+                            torch.nn.Dropout(config.dropout / 10),
+
+                            torch.nn.Linear(inner_dim, width, bias=False),
+                            torch.nn.Dropout(config.dropout)
+                        )
+                    )
                 elif (config.adapter.struct.type == "768-bn"):
                     setattr(
                         self,
@@ -575,13 +608,13 @@ class CompInvAdapter(nn.Module):
                         _name,
                         torch.nn.Sequential(
                             torch.nn.Linear(width, inner_dim, bias=False),
+                            # torch.nn.LayerNorm((num_frames, 196, inner_dim)),
                             torch.nn.GELU(),
-                            torch.nn.LayerNorm(inner_dim),
                             torch.nn.Dropout(config.dropout / 5),
 
                             torch.nn.Linear(inner_dim, inner_dim, bias=False),
+                            # torch.nn.LayerNorm((num_frames, 196, inner_dim)),
                             torch.nn.GELU(),
-                            torch.nn.LayerNorm(inner_dim),
                             torch.nn.Dropout(config.dropout / 5),
 
                             torch.nn.Linear(inner_dim, width, bias=False),
