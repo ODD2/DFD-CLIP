@@ -443,7 +443,7 @@ class Detector(nn.Module):
             #######################################################
 
             other_losses["recon"] = recon_loss
-            other_losses["match"] = match_loss
+            other_losses["match"] = 50 * match_loss
 
         if "nerf_raw" in self.train_mode:
             for i in range(len(task_losses)):
