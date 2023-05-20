@@ -583,7 +583,7 @@ class CompInvAdapter(nn.Module):
                         _name,
                         torch.nn.Sequential(
                             torch.nn.Linear(width, inner_dim, bias=False),
-                            torch.nn.LayerNorm((num_frames, 196, inner_dim)),
+                            torch.nn.LayerNorm((196, inner_dim)),
                             torch.nn.GELU(),
                             torch.nn.Dropout(config.dropout / 10),
 
