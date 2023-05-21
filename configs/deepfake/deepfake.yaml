@@ -1,5 +1,5 @@
 data:
-  clip_duration: 5
+  clip_duration: 4
   eval:
   - augmentation: none
     category: Deepfake
@@ -15,16 +15,16 @@ data:
     types:
     - REAL
     - NT
-  # - category: Deepfake
-  #   name: DFDC
-  #   pack: 0
-  #   root_dir: ./datasets/dfdc/
-  #   scale: 0.1
-  # - category: Deepfake
-  #   name: CDF
-  #   pack: 0
-  #   root_dir: ./datasets/cdf/
-  #   scale: 0.6
+  - category: Deepfake
+    name: DFDC
+    pack: 0
+    root_dir: ./datasets/dfdc/
+    scale: 0.1
+  - category: Deepfake
+    name: CDF
+    pack: 0
+    root_dir: ./datasets/cdf/
+    scale: 0.6
   num_frames: 20
   train:
   - augmentation: normal+frame
@@ -35,7 +35,7 @@ data:
     detection_level: video
     name: FFPP
     pack: 0
-    pair: 1
+    pair: 0
     root_dir: ./datasets/ffpp/
     scale: 1.0
     types:
@@ -50,26 +50,26 @@ evaluator:
     types:
     - accuracy
     - roc_auc
-  # - name: deepfake/cdf
-  #   types:
-  #   - accuracy
-  #   - roc_auc
-  # - name: deepfake/dfdc
-  #   types:
-  #   - accuracy
-  #   - roc_auc
+  - name: deepfake/cdf
+    types:
+    - accuracy
+    - roc_auc
+  - name: deepfake/dfdc
+    types:
+    - accuracy
+    - roc_auc
   name: Evaluator
   num_workers: 8
 model:
   adapter:
     frozen: 0
     struct:
-      type: 768-x-768
+      type: 768-x-768-nln
       x: 256
     type: normal
   architecture: ViT-B/16
-  decode_indices: []
-  decode_mode: stride
+  decode_indices: [6,7,8,9,10,11]
+  decode_mode: index
   decode_stride: 2
   dropout: 0.5
   losses:
@@ -77,12 +77,10 @@ model:
   name: Detector
   out_dim:
   - 2
-  weight_decay: 0.05
-  train_mode:
-    compression: sync
+  weight_decay: 0.01
 system:
   deterministic_training: true
-  evaluation_interval: 500
+  evaluation_interval: 300
   mixed_precision: 'no'
   seed: 0
   training_eval_interval: 10
@@ -95,9 +93,9 @@ tracking:
   project_name: deepfake
   tool: wandb
 trainer:
-  batch_size: 5
+  batch_size: 12
   ema_ratio: 0.999
-  learning_rate: 5.0e-04
+  learning_rate: 1.0e-02
   max_steps: 3000
   metrics:
   - name: deepfake/ffpp

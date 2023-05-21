@@ -518,7 +518,7 @@ class Detector(nn.Module):
         return task_losses, task_logits, other_losses
 
     def configure_optimizers(self, lr):
-        return torch.optim.AdamW(
+        return torch.optim.SGD(
             params=[i for i in self.parameters() if i.requires_grad],
             lr=lr,
             weight_decay=self.weight_decay
