@@ -521,7 +521,8 @@ class Detector(nn.Module):
         return torch.optim.SGD(
             params=[i for i in self.parameters() if i.requires_grad],
             lr=lr,
-            weight_decay=self.weight_decay
+            weight_decay=self.weight_decay,
+            momentum=0.9
         )
 
     def _transform(self, n_px):
