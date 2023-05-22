@@ -1,5 +1,5 @@
 data:
-  clip_duration: 5
+  clip_duration: 4
   eval:
   - augmentation: none
     category: Deepfake
@@ -63,14 +63,13 @@ evaluator:
 model:
   adapter:
     frozen: 0
-    path: /home/od/Desktop/repos/dfd-clip/logs/comp-inv/comp-inv/mode1+256+resi+1e-2/last_weights.pt
     struct:
-      type: 768-x-768
+      type: 768-x-768-nln
       x: 256
-    type: pretrain
+    type: normal
   architecture: ViT-B/16
-  decode_indices: []
-  decode_mode: stride
+  decode_indices: [6,7,8,9,10,11]
+  decode_mode: index
   decode_stride: 2
   dropout: 0.5
   losses:
@@ -78,9 +77,7 @@ model:
   name: Detector
   out_dim:
   - 2
-  train_mode:
-    type: normal
-  weight_decay: 0.05
+  weight_decay: 0.01
 system:
   deterministic_training: true
   evaluation_interval: 300
@@ -98,8 +95,8 @@ tracking:
 trainer:
   batch_size: 12
   ema_ratio: 0.999
-  learning_rate: 5.0e-05
-  max_steps: 3000
+  learning_rate: 1.0e-02
+  max_steps: 30
   metrics:
   - name: deepfake/ffpp
     types:

@@ -68,7 +68,13 @@ model:
       x: 256
     type: normal
   architecture: ViT-B/16
-  decode_indices: [6,7,8,9,10,11]
+  decode_indices:
+  - 6
+  - 7
+  - 8
+  - 9
+  - 10
+  - 11
   decode_mode: index
   decode_stride: 2
   dropout: 0.5
@@ -77,6 +83,7 @@ model:
   name: Detector
   out_dim:
   - 2
+  train_mode: {}
   weight_decay: 0.01
 system:
   deterministic_training: true
@@ -95,7 +102,7 @@ tracking:
 trainer:
   batch_size: 12
   ema_ratio: 0.999
-  learning_rate: 1.0e-02
+  learning_rate: 0.003
   max_steps: 3000
   metrics:
   - name: deepfake/ffpp

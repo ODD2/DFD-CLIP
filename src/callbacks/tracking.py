@@ -1,7 +1,9 @@
+import wandb
 import builtins
 import re
 import torch
 from ..trainer import _Trainer
+
 
 @torch.no_grad()
 def update_trackers(agent):
@@ -11,7 +13,7 @@ def update_trackers(agent):
     if not isinstance(agent, _Trainer):
         return
 
-    agent.accelerator.log(
+    wandb.log(
         {
             f'lr': agent.optimizer.param_groups[0]['lr'],
         },
@@ -21,9 +23,9 @@ def update_trackers(agent):
 
 @torch.no_grad()
 def cache_best_model(agent):
-    target_metrics = [value for name,value in agent.compute_metrics.items() if re.search(agent.main_metric, name)]
-    if(len(target_metrics) > 0):
-        main_metric =  sum(target_metrics) / max(len(target_metrics) ,1)
+    target_metrics = [value for name, value in agent.compute_metrics.items() if re.search(agent.main_metric, name)]
+    if (len(target_metrics) > 0):
+        main_metric = sum(target_metrics) / max(len(target_metrics), 1)
         current_best = getattr(agent, 'best_main_metric', main_metric)
 
         if getattr(builtins, agent.compare_fn)(main_metric, current_best) == main_metric:
@@ -33,8 +35,7 @@ def cache_best_model(agent):
             agent.best_main_metric = main_metric
             agent.best_model_state = agent.accelerator.unwrap_model(agent.model).state_dict()
             agent.best_model_state = {k: v.cpu() for k, v in agent.best_model_state.items()}
-    
+
     # update latest
     agent.last_model_state = agent.accelerator.unwrap_model(agent.model).state_dict()
     agent.last_model_state = {k: v.cpu() for k, v in agent.last_model_state.items()}
-
