@@ -63,7 +63,7 @@ def collate_fn(batch):
 def main(args):
     root = args.artifacts_dir
 
-    config = get_config(path.join(root, 'config.yaml'), args)
+    config = get_config(path.join(root, f"{args.cfg_name}.yaml"), args)
 
     accelerator = Accelerator()
 
@@ -207,6 +207,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--test",
         action="store_true",
+    )
+
+    parser.add_argument(
+        "--cfg_name",
+        type=str,
+        default="config"
     )
 
     main(parser.parse_args())

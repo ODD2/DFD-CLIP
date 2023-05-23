@@ -269,6 +269,9 @@ def main(params):
 
     # finished
     if config.tracking.enabled:
+        WANDB_PROJECT_DIR = '/'.join(PROJECT_DIR.split('/')[:-2] + [wandb.run.name])
+        logging.info(f"Rename directory: {PROJECT_DIR} -> {WANDB_PROJECT_DIR}")
+        os.rename(PROJECT_DIR, WANDB_PROJECT_DIR)
         wandb.finish()
 
 
