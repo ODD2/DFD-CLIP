@@ -55,13 +55,13 @@ class SessionMeta:
         self.xml = ET.parse(self.session_path).getroot()
         # fetch session media setups
         self.session_video_beg_sample = int(
-            float(self.xml.attrib["vidBeginSmp"]))+1
+            float(self.xml.attrib["vidBeginSmp"])) + 1
         self.session_video_end_sample = int(
             float(self.xml.attrib["vidEndSmp"]))
         self.session_video_sample_freq = round(
             float(self.xml.attrib["vidRate"]))
         self.session_audio_beg_sample = int(
-            float(self.xml.attrib["audBeginSmp"]))+1
+            float(self.xml.attrib["audBeginSmp"])) + 1
         self.session_audio_end_sample = int(
             float(self.xml.attrib["audEndSmp"]))
         self.session_audio_sample_freq = round(
@@ -133,7 +133,7 @@ class SessionMeta:
                 self.media_beg_time_ms = media_events[0][1]
                 self.media_end_time_ms = media_events[-1][1]
                 self.duration = (self.media_end_time_ms -
-                                 self.media_beg_time_ms)//1000
+                                 self.media_beg_time_ms) // 1000
 
     def sync_time(self):
         if (not type(self.gae_data) == type(None) and self.bdf_path):
@@ -150,19 +150,19 @@ class SessionMeta:
                 self.media_beg_time_ms += ms_shift
                 self.flag_audio_beg_sample = self.session_audio_beg_sample
                 self.flag_hr_beg_sample = int(
-                    (30 + ms_shift/1000) * self.session_hr_sample_freq)
+                    (30 + ms_shift / 1000) * self.session_hr_sample_freq)
             else:
                 self.flag_audio_beg_sample = estimate_media_audio_sample
                 self.flag_hr_beg_sample = int(30 * self.session_hr_sample_freq)
 
             self.flag_video_beg_sample = (self.session_video_beg_sample +
                                           int(
-                                              (self.flag_audio_beg_sample-self.session_audio_beg_sample) /
+                                              (self.flag_audio_beg_sample - self.session_audio_beg_sample) /
                                               self.session_audio_sample_freq * self.session_video_sample_freq
                                           )
                                           )
             self.duration = (self.media_end_time_ms -
-                             self.media_beg_time_ms)//1000
+                             self.media_beg_time_ms) // 1000
 
     def audio_sample_shift(self, ms):
         return ms / 1000 * self.session_audio_sample_freq
@@ -205,6 +205,7 @@ class FFPP(Dataset):
         C.pair = 0
         C.contrast = 0
         C.augmentation = "none"
+        C.random_speed = 1
         return C
 
     def __init__(self, config, num_frames, clip_duration, transform=None, accelerator=None, split='train', index=0):
@@ -227,6 +228,7 @@ class FFPP(Dataset):
         self.num_frames = num_frames
         self.clip_duration = clip_duration
         self.split = split
+        self.random_speed = config.random_speed
         self.transform = transform
 
         self.index = index
@@ -252,34 +254,64 @@ class FFPP(Dataset):
             self.sequence_augmentation = None
             config.augmentation = config.augmentation.split('+')
 
-            if "normal" in config.augmentation:
-                self.sequence_augmentation = alb.ReplayCompose(
-                    [
-                        alb.RGBShift((-20, 20), (-20, 20), (-20, 20), p=0.3),
-                        alb.HueSaturationValue(
-                            hue_shift_limit=(-0.3, 0.3), sat_shift_limit=(-0.3, 0.3), val_shift_limit=(-0.3, 0.3), p=0.3),
-                        alb.RandomBrightnessContrast(
-                            brightness_limit=(-0.3, 0.3), contrast_limit=(-0.3, 0.3), p=0.3),
-                        alb.ImageCompression(
-                            quality_lower=40, quality_upper=100, p=0.5),
-                        alb.HorizontalFlip()
-                    ],
-                    p=1.
-                )
+            if "dev-mode" in config.augmentation:
+                if "force-rgb" in config.augmentation:
+                    self.sequence_augmentation = alb.ReplayCompose(
+                        [
+                            alb.RGBShift((-20, 20), (-20, 20), (-20, 20), p=1.)
+                        ],
+                        p=1.
+                    )
+                elif "force-hue" in config.augmentation:
+                    self.sequence_augmentation = alb.ReplayCompose(
+                        [
+                            alb.HueSaturationValue(
+                                hue_shift_limit=(-0.3, 0.3),
+                                sat_shift_limit=(-0.3, 0.3),
+                                val_shift_limit=(-0.3, 0.3),
+                                p=1.
+                            ),
+                        ],
+                        p=1.
+                    )
+                elif "force-bright" in config.augmentation:
+                    self.sequence_augmentation = alb.ReplayCompose(
+                        [
+                            alb.RandomBrightnessContrast(
+                                brightness_limit=(-0.3, 0.3), contrast_limit=(-0.3, 0.3), p=1.
+                            ),
+                        ],
+                        p=1.
+                    )
+            else:
+                if "normal" in config.augmentation:
+                    self.sequence_augmentation = alb.ReplayCompose(
+                        [
+                            alb.RGBShift((-20, 20), (-20, 20), (-20, 20), p=0.3),
+                            alb.HueSaturationValue(
+                                hue_shift_limit=(-0.3, 0.3), sat_shift_limit=(-0.3, 0.3), val_shift_limit=(-0.3, 0.3), p=0.3),
+                            alb.RandomBrightnessContrast(
+                                brightness_limit=(-0.3, 0.3), contrast_limit=(-0.3, 0.3), p=0.3),
+                            alb.ImageCompression(
+                                quality_lower=40, quality_upper=100, p=0.5),
+                            alb.HorizontalFlip()
+                        ],
+                        p=1.
+                    )
 
-            if "frame" in config.augmentation:
-                self.frame_augmentation = alb.ReplayCompose(
-                    [
-                        alb.RGBShift((-5, 5), (-5, 5), (-5, 5), p=0.3),
-                        alb.HueSaturationValue(
-                            hue_shift_limit=(-0.05, 0.05), sat_shift_limit=(-0.05, 0.05), val_shift_limit=(-0.05, 0.05), p=0.3),
-                        alb.RandomBrightnessContrast(
-                            brightness_limit=(-0.05, 0.05), contrast_limit=(-0.05, 0.05), p=0.3),
-                        alb.ImageCompression(
-                            quality_lower=80, quality_upper=100, p=0.5)
-                    ],
-                    p=1.0
-                )
+                if "frame" in config.augmentation:
+                    self.frame_augmentation = alb.ReplayCompose(
+                        [
+                            alb.RGBShift((-5, 5), (-5, 5), (-5, 5), p=0.3),
+                            alb.HueSaturationValue(
+                                hue_shift_limit=(-0.05, 0.05), sat_shift_limit=(-0.05, 0.05), val_shift_limit=(-0.05, 0.05), p=0.3),
+                            alb.RandomBrightnessContrast(
+                                brightness_limit=(-0.05, 0.05), contrast_limit=(-0.05, 0.05), p=0.3),
+                            alb.ImageCompression(
+                                quality_lower=80, quality_upper=100, p=0.5)
+                        ],
+                        p=1.0
+                    )
 
             if (self.frame_augmentation == None and self.sequence_augmentation == None):
                 raise NotImplementedError()
@@ -345,7 +377,7 @@ class FFPP(Dataset):
                         video_metas[f.name[:-4]] = {
                             "fps": fps,
                             "frames": frames,
-                            "duration": frames/fps,
+                            "duration": frames / fps,
                             "path": f.path
                         }
                         cap.release()
@@ -375,11 +407,12 @@ class FFPP(Dataset):
 
                 for idx in adj_idxs:
                     if idx in self.video_table[df_type][comp]:
-                        clips = int(self.video_table[df_type][comp][idx]["duration"]//self.clip_duration)
+                        clips = int(self.video_table[df_type][comp][idx]["duration"] // self.clip_duration)
                         if (clips > 0):
                             comp_videos.append((df_type, comp, idx, clips))
                     else:
-                        accelerator.print(f'Warning: video {path.join(self.root, self.TYPE_DIRS[df_type], comp, "videos", idx)} does not present in the processed dataset.')
+                        accelerator.print(
+                            f'Warning: video {path.join(self.root, self.TYPE_DIRS[df_type], comp, "videos", idx)} does not present in the processed dataset.')
                 self.video_list += comp_videos[:int(self.scale * len(comp_videos))]
 
         # stacking up the amount of data clips for further usage
@@ -396,7 +429,7 @@ class FFPP(Dataset):
 
     def __getitem__(self, idx):
         if (self.pack):
-            start = 0 if idx == 0 else self.stack_video_clips[idx-1]
+            start = 0 if idx == 0 else self.stack_video_clips[idx - 1]
             end = self.stack_video_clips[idx]
             frames = []
             label = []
@@ -423,7 +456,7 @@ class FFPP(Dataset):
             result = []
             result.append(self.get_dict(main_idx, target_label=main_label))
             result.append(self.get_dict(auxi_idx, target_label=(not main_label)))
-            return *[[_r[name] for _r in result] for name in ["frames", "label", "mask", "speed"]], [self.index]*2
+            return *[[_r[name] for _r in result] for name in ["frames", "label", "mask", "speed"]], [self.index] * 2
         else:
             result = self.get_dict(idx)
             return result["frames"], result["label"], result["mask"], result["speed"], self.index
@@ -441,15 +474,16 @@ class FFPP(Dataset):
                     continue
 
                 video_meta = self.video_table[df_type][comp][video_name]
-                video_offset_duration = (idx - (0 if video_idx == 0 else self.stack_video_clips[video_idx-1]))*self.clip_duration
+                video_offset_duration = (
+                    idx - (0 if video_idx == 0 else self.stack_video_clips[video_idx - 1])) * self.clip_duration
                 logging.debug(f"Item/Video Index:{idx}/{video_idx}")
                 logging.debug(f"Item DF/COMP:{df_type}/{comp}")
 
                 # augment the data only while training.
-                if (self.split == "train"):
+                if (self.split == "train" and self.random_speed):
                     # the slow motion factor for video data augmentation
                     video_speed_factor = random.random() * 0.5 + 0.5
-                    video_shift_factor = random.random() * (1-video_speed_factor)
+                    video_shift_factor = random.random() * (1 - video_speed_factor)
                 else:
                     video_speed_factor = 1
                     video_shift_factor = 0
@@ -479,13 +513,13 @@ class FFPP(Dataset):
                     video_sample_freq = vid_reader.get_metadata()["video"]["fps"][0]
                     # - the amount of frames to skip
                     video_sample_offset = int(
-                        video_offset_duration+self.clip_duration * video_shift_factor)
+                        video_offset_duration + self.clip_duration * video_shift_factor)
                     # - the amount of frames for the duration of a clip
                     video_clip_samples = int(
-                        video_sample_freq * self.clip_duration*video_speed_factor)
+                        video_sample_freq * self.clip_duration * video_speed_factor)
                     # - the amount of frames to skip in order to meet the num_frames per clip.(excluding the head & tail frames )
                     video_sample_stride = (
-                        (video_clip_samples-1) / (self.num_frames - 1))/video_sample_freq
+                        (video_clip_samples - 1) / (self.num_frames - 1)) / video_sample_freq
                     logging.debug(f"Loading Video: {vid_path}")
                     logging.debug(f"Sample Offset: {video_sample_offset}")
                     logging.debug(f"Sample Stride: {video_sample_stride}")
@@ -612,9 +646,10 @@ class RPPG(Dataset):
 
         # dataset splitting
         if split == "train":
-            target_sessions = session_dirs[:int(len(session_dirs)*config.train_ratio*self.scale)]
+            target_sessions = session_dirs[:int(len(session_dirs) * config.train_ratio * self.scale)]
         elif split == "val":
-            target_sessions = session_dirs[int(len(session_dirs)*((1-config.train_ratio)*(1-self.scale) + config.train_ratio)):]
+            target_sessions = session_dirs[int(
+                len(session_dirs) * ((1 - config.train_ratio) * (1 - self.scale) + config.train_ratio)):]
 
         # speed up dataset initialization
         if (not config.meta_folder):
@@ -690,7 +725,7 @@ class RPPG(Dataset):
         self.stack_session_clips.pop(0)
 
     def __len__(self):
-        return self.stack_session_clips[-1]*len(self.compressions)
+        return self.stack_session_clips[-1] * len(self.compressions)
 
     def __getitem__(self, idx):
         result = self.get_dict(idx, self.runtime)
@@ -705,7 +740,8 @@ class RPPG(Dataset):
                 idx = idx % self.stack_session_clips[-1]
                 session_idx = next(i for i, x in enumerate(self.stack_session_clips) if idx < x)
                 session_meta = self.session_metas[session_idx]
-                session_offset_duration = (idx - (0 if session_idx == 0 else self.stack_session_clips[session_idx-1]))*self.clip_duration
+                session_offset_duration = (
+                    idx - (0 if session_idx == 0 else self.stack_session_clips[session_idx - 1])) * self.clip_duration
                 hr_data = None
                 measures = None
                 wd = None
@@ -716,25 +752,28 @@ class RPPG(Dataset):
                 # - the ERG sample frequency
                 hr_sample_freq = session_meta.session_hr_sample_freq
                 # - the amount of samples to skip, including the 30s stimulation offset and session clip offset.
-                hr_sample_offset = session_meta.flag_hr_beg_sample + int(session_offset_duration*hr_sample_freq)
+                hr_sample_offset = session_meta.flag_hr_beg_sample + int(session_offset_duration * hr_sample_freq)
                 # - the amount of samples for the duration of a clip
-                hr_clip_samples = int(hr_sample_freq*self.clip_duration)
+                hr_clip_samples = int(hr_sample_freq * self.clip_duration)
                 # - the end sample of the session clip
                 hr_sample_end = hr_sample_offset + hr_clip_samples
                 if (not runtime):
                     # - interpolate the hr sample
                     session_measure = self.session_measures[session_idx]
                     measure_idx = next(i for i, x in enumerate(session_measure["idx"]) if hr_sample_end <= x)
-                    assert 0 < measure_idx <= len(session_measure["idx"]), f"erroneous measure index {measure_idx} for end sample {hr_sample_end}"
+                    assert 0 < measure_idx <= len(
+                        session_measure["idx"]), f"erroneous measure index {measure_idx} for end sample {hr_sample_end}"
                     # - calculate the distance ratio of the session clip to the two nearest preprocessed measure locations.
-                    measure_ratio = (session_measure["idx"][measure_idx] - hr_sample_end) / (session_measure["idx"][measure_idx] - session_measure["idx"][measure_idx-1])
+                    measure_ratio = (session_measure["idx"][measure_idx] - hr_sample_end) / \
+                        (session_measure["idx"][measure_idx] - session_measure["idx"][measure_idx - 1])
                     # - perform interpolation
                     bpm = (
-                        measure_ratio * session_measure["data"][measure_idx-1]["bpm"] +
+                        measure_ratio * session_measure["data"][measure_idx - 1]["bpm"] +
                         (1 - measure_ratio) * session_measure["data"][measure_idx]["bpm"]
                     )
                 else:
-                    signals, signal_headers, _ = BDFReader.read_edf(session_meta.bdf_path, ch_names=["EXG1", "EXG2", "EXG3", "Status"])
+                    signals, signal_headers, _ = BDFReader.read_edf(session_meta.bdf_path, ch_names=[
+                                                                    "EXG1", "EXG2", "EXG3", "Status"])
                     _hr_datas = []
                     for hr_channel_idx in range(3):
                         try:
@@ -743,13 +782,15 @@ class RPPG(Dataset):
                             # - fetch heart rate data of clip duration
                             _hr_data = signals[hr_channel_idx][hr_sample_offset:hr_sample_offset + hr_clip_samples]
                             # - preprocess the ERG data: filter out the noise.
-                            _hr_data = hp.filter_signal(_hr_data, cutoff=0.05, sample_rate=session_meta.session_hr_sample_freq, filtertype='notch')
+                            _hr_data = hp.filter_signal(
+                                _hr_data, cutoff=0.05, sample_rate=session_meta.session_hr_sample_freq, filtertype='notch')
                             # - scale down the ERG value to 3.4 max.
-                            _hr_data = (_hr_data - _hr_data.min()) / (_hr_data.max()-_hr_data.min()) * 3.4
+                            _hr_data = (_hr_data - _hr_data.min()) / (_hr_data.max() - _hr_data.min()) * 3.4
                             # - resample the ERG
                             _hr_data = resample(_hr_data, len(_hr_data) * 4)
                             # - process the ERG data: get measurements.
-                            _wd, _measures = hp.process(hp.scale_data(_hr_data), session_meta.session_hr_sample_freq * 4)
+                            _wd, _measures = hp.process(hp.scale_data(
+                                _hr_data), session_meta.session_hr_sample_freq * 4)
                             # - nan/error check
                             if (_measures["bpm"] > 180 or _measures["bpm"] < 41):
                                 continue
@@ -777,7 +818,8 @@ class RPPG(Dataset):
                 assert 41 <= bpm <= 180, f"bpm located out of the defined range: {bpm}"
                 # - create label
                 if (self.label_type == "dist"):
-                    label = torch.tensor([1/(pow(2*math.pi, 0.5))*pow(math.e, (-pow((k-(bpm-41)), 2)/2)) for k in range(self.label_dim)])
+                    label = torch.tensor([1 / (pow(2 * math.pi, 0.5)) * pow(math.e,
+                                         (-pow((k - (bpm - 41)), 2) / 2)) for k in range(self.label_dim)])
                 elif (self.label_type == "num"):
                     label = bpm - 41
                 logging.debug(f"rPPG Load Duration:{time() - rppg_load_begin}")
@@ -793,14 +835,16 @@ class RPPG(Dataset):
                     comp_video_path,
                     "video"
                 )
-                assert int(session_meta.session_video_sample_freq) == int(vid_reader.get_metadata()["video"]["fps"][0]), f"video sample frequency mismatch: {int(session_meta.session_video_sample_freq)},{int(vid_reader.get_metadata()['video']['fps'][0])}"
+                assert int(session_meta.session_video_sample_freq) == int(vid_reader.get_metadata()[
+                    "video"]["fps"][0]), f"video sample frequency mismatch: {int(session_meta.session_video_sample_freq)},{int(vid_reader.get_metadata()['video']['fps'][0])}"
                 video_sample_freq = session_meta.session_video_sample_freq
                 # - the amount of frames to skip
-                video_sample_offset = int(session_meta.flag_video_beg_sample - session_meta.session_video_beg_sample)/video_sample_freq + int(session_offset_duration)
+                video_sample_offset = int(session_meta.flag_video_beg_sample -
+                                          session_meta.session_video_beg_sample) / video_sample_freq + int(session_offset_duration)
                 # - the amount of frames for the duration of a clip
                 video_clip_samples = int(session_meta.session_video_sample_freq * self.clip_duration)
                 # - the amount of frames to skip in order to meet the num_frames per clip.(excluding the head & tail frames )
-                video_sample_stride = (video_clip_samples-1) / (self.num_frames - 1) / video_sample_freq
+                video_sample_stride = (video_clip_samples - 1) / (self.num_frames - 1) / video_sample_freq
                 # - fetch frames of clip duration
                 logging.debug(f"Loading video: {comp_video_path}")
                 logging.debug(f"Sample Offset: {video_sample_offset}")
@@ -808,7 +852,7 @@ class RPPG(Dataset):
                 # - fast forward to the the sampling start.
                 for sample_idx in range(self.num_frames):
                     try:
-                        vid_reader.seek(video_sample_offset + video_sample_stride*sample_idx)
+                        vid_reader.seek(video_sample_offset + video_sample_stride * sample_idx)
                         frame = next(vid_reader)
                         frames.append(frame["data"])
                     except Exception as e:
@@ -910,7 +954,7 @@ class CDF(Dataset):
                     video_metas[f.name[:-4]] = {
                         "fps": fps,
                         "frames": frames,
-                        "duration": frames/fps,
+                        "duration": frames / fps,
                         "path": f.path
                     }
                     cap.release()
@@ -942,11 +986,12 @@ class CDF(Dataset):
                 name, ext = os.path.splitext(filename)
                 if name in self.video_table[label]:
                     clips = int(
-                        self.video_table[label][name]["duration"]//self.clip_duration)
+                        self.video_table[label][name]["duration"] // self.clip_duration)
                     if (clips > 0):
                         _videos.append((label.upper(), name, clips))
                 else:
-                    accelerator.print(f'Warning: video {path.join(self.root, label, "videos", name)} does not present in the processed dataset.')
+                    accelerator.print(
+                        f'Warning: video {path.join(self.root, label, "videos", name)} does not present in the processed dataset.')
             self.video_list += _videos[:int(self.scale * len(_videos))]
 
         # stacking up the amount of data clips for further usage
@@ -963,7 +1008,7 @@ class CDF(Dataset):
 
     def __getitem__(self, idx):
         if (self.pack):
-            start = 0 if idx == 0 else self.stack_video_clips[idx-1]
+            start = 0 if idx == 0 else self.stack_video_clips[idx - 1]
             end = self.stack_video_clips[idx]
             frames = []
             label = []
@@ -989,7 +1034,8 @@ class CDF(Dataset):
                 video_idx = next(i for i, x in enumerate(self.stack_video_clips) if idx < x)
                 label, video_name, clips = self.video_list[video_idx]
                 video_meta = self.video_table[label][video_name]
-                video_offset_duration = (idx - (0 if video_idx == 0 else self.stack_video_clips[video_idx-1]))*self.clip_duration
+                video_offset_duration = (
+                    idx - (0 if video_idx == 0 else self.stack_video_clips[video_idx - 1])) * self.clip_duration
                 logging.debug(f"Item/Video Index:{idx}/{video_idx}")
                 logging.debug(f"Item Label:{label}")
 
@@ -1006,7 +1052,7 @@ class CDF(Dataset):
                 # - the amount of frames for the duration of a clip
                 video_clip_samples = int(video_sample_freq * self.clip_duration)
                 # - the amount of frames to skip in order to meet the num_frames per clip.(excluding the head & tail frames )
-                video_sample_stride = ((video_clip_samples-1) / (self.num_frames - 1))/video_sample_freq
+                video_sample_stride = ((video_clip_samples - 1) / (self.num_frames - 1)) / video_sample_freq
                 logging.debug(f"Loading Video: {video_meta['path']}")
                 logging.debug(f"Sample Offset: {video_sample_offset}")
                 logging.debug(f"Sample Stride: {video_sample_stride}")
@@ -1109,7 +1155,7 @@ class DFDC(Dataset):
                     video_metas[f.name[:-4]] = {
                         "fps": fps,
                         "frames": frames,
-                        "duration": frames/fps,
+                        "duration": frames / fps,
                         "path": f.path
                     }
                     cap.release()
@@ -1139,11 +1185,12 @@ class DFDC(Dataset):
             name, ext = os.path.splitext(filename)
             label = "REAL" if row["label"] == 0 else "FAKE"
             if name in self.video_table:
-                clips = int(self.video_table[name]["duration"]//self.clip_duration)
+                clips = int(self.video_table[name]["duration"] // self.clip_duration)
                 if (clips > 0):
                     _videos.append((label, name, clips))
             else:
-                accelerator.print(f'Warning: video {path.join(self.root, label, "videos", name)} does not present in the processed dataset.')
+                accelerator.print(
+                    f'Warning: video {path.join(self.root, label, "videos", name)} does not present in the processed dataset.')
         self.video_list += _videos[:int(self.scale * len(_videos))]
 
         # stacking up the amount of data clips for further usage
@@ -1160,7 +1207,7 @@ class DFDC(Dataset):
 
     def __getitem__(self, idx):
         if (self.pack):
-            start = 0 if idx == 0 else self.stack_video_clips[idx-1]
+            start = 0 if idx == 0 else self.stack_video_clips[idx - 1]
             end = self.stack_video_clips[idx]
             frames = []
             label = []
@@ -1186,7 +1233,8 @@ class DFDC(Dataset):
                 video_idx = next(i for i, x in enumerate(self.stack_video_clips) if idx < x)
                 label, video_name, clips = self.video_list[video_idx]
                 video_meta = self.video_table[video_name]
-                video_offset_duration = (idx - (0 if video_idx == 0 else self.stack_video_clips[video_idx-1]))*self.clip_duration
+                video_offset_duration = (
+                    idx - (0 if video_idx == 0 else self.stack_video_clips[video_idx - 1])) * self.clip_duration
                 logging.debug(f"Item/Video Index:{idx}/{video_idx}")
                 logging.debug(f"Item Label:{label}")
 
@@ -1203,7 +1251,7 @@ class DFDC(Dataset):
                 # - the amount of frames for the duration of a clip
                 video_clip_samples = int(video_sample_freq * self.clip_duration)
                 # - the amount of frames to skip in order to meet the num_frames per clip.(excluding the head & tail frames )
-                video_sample_stride = ((video_clip_samples-1) / (self.num_frames - 1))/video_sample_freq
+                video_sample_stride = ((video_clip_samples - 1) / (self.num_frames - 1)) / video_sample_freq
                 logging.debug(f"Loading Video: {video_meta['path']}")
                 logging.debug(f"Sample Offset: {video_sample_offset}")
                 logging.debug(f"Sample Stride: {video_sample_stride}")
