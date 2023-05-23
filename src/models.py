@@ -413,29 +413,34 @@ class Detector(nn.Module):
                     raw_i = i * 2 + 1
                     c23_i = i * 2
 
-                for layer in range(_l):
-                    for subject in ["k", "v"]:
-                        if self.train_mode.compression == "sync":
+                if self.train_mode.compression == "feature-match":
+                    match_loss += torch.nn.functional.kl_div(
+                        torch.log_softmax(video_features[c23_i], dim=-1),
+                        torch.log_softmax(video_features[raw_i], dim=-1),
+                        log_target=True
+                    ) / (_w)
+                else:
+                    for layer in range(_l):
+                        for subject in ["k", "v"]:
+                            if self.train_mode.compression == "sync":
+                                #######################################################
+                                # match_diff += torch.abs(kvs[layer][subject][raw_i] - kvs[layer][subject][c23_i])
+                                #######################################################
+                                # _source_feat.append(kvs[layer][subject][c23_i])
+                                # _target_feat.append(kvs[layer][subject][raw_i])
+                                #######################################################
 
-                            #######################################################
-                            # match_diff += torch.abs(kvs[layer][subject][raw_i] - kvs[layer][subject][c23_i])
-                            #######################################################
-                            # _source_feat.append(kvs[layer][subject][c23_i])
-                            # _target_feat.append(kvs[layer][subject][raw_i])
-                            #######################################################
-
-                            # match_loss += torch.nn.functional.mse_loss(
-                            #     kvs[layer][subject][c23_i],
-                            #     kvs[layer][subject][raw_i]
-                            # ) / (_w * _l * 2)
-                            match_loss += torch.nn.functional.kl_div(
-                                torch.log_softmax(kvs[layer][subject][c23_i], dim=-1),
-                                torch.log_softmax(kvs[layer][subject][raw_i], dim=-1),
-                                log_target=True
-                            ) / (_w * _l * 2)
-
-                        else:
-                            raise NotImplementedError()
+                                # match_loss += torch.nn.functional.mse_loss(
+                                #     kvs[layer][subject][c23_i],
+                                #     kvs[layer][subject][raw_i]
+                                # ) / (_w * _l * 2)
+                                match_loss += torch.nn.functional.kl_div(
+                                    torch.log_softmax(kvs[layer][subject][c23_i], dim=-1),
+                                    torch.log_softmax(kvs[layer][subject][raw_i], dim=-1),
+                                    log_target=True
+                                ) / (_w * _l * 2)
+                            else:
+                                raise NotImplementedError()
 
             #######################################################
             # recon_loss = torch.norm((recon_diff/(_w * _l *  2)).view((-1,_h*_d)).mean(dim=0))
@@ -448,8 +453,9 @@ class Detector(nn.Module):
             #######################################################
 
             other_losses["recon"] = recon_loss
-            other_losses["match"] = 50 * match_loss
+            other_losses["match"] = match_loss
 
+        # nerf the strength of raw samples
         if "nerf_raw" in self.train_mode:
             for i in range(len(task_losses)):
                 for j in range(_b):

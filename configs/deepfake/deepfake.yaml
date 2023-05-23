@@ -35,7 +35,7 @@ data:
     detection_level: video
     name: FFPP
     pack: 0
-    pair: 0
+    pair: 1
     root_dir: ./datasets/ffpp/
     scale: 1.0
     types:
@@ -68,13 +68,7 @@ model:
       x: 256
     type: normal
   architecture: ViT-B/16
-  decode_indices:
-  - 6
-  - 7
-  - 8
-  - 9
-  - 10
-  - 11
+  decode_indices: [6,7,8,9,10,11]
   decode_mode: index
   decode_stride: 2
   dropout: 0.5
@@ -83,7 +77,8 @@ model:
   name: Detector
   out_dim:
   - 2
-  train_mode: {}
+  train_mode: 
+    compression: feature-match
   weight_decay: 0.01
 system:
   deterministic_training: true
@@ -100,7 +95,7 @@ tracking:
   project_name: deepfake
   tool: wandb
 trainer:
-  batch_size: 12
+  batch_size: 6
   ema_ratio: 0.999
   learning_rate: 0.003
   max_steps: 3000
