@@ -474,7 +474,7 @@ class Detector(nn.Module):
             #######################################################
 
             other_losses["recon"] = recon_loss
-            other_losses["match"] = 10 * match_loss
+            other_losses["match"] = 100 * match_loss
 
         # nerf the strength of raw samples
         if "nerf_raw" in self.train_mode:
