@@ -453,14 +453,17 @@ class Detector(nn.Module):
             #######################################################
 
             other_losses["recon"] = recon_loss
-            other_losses["match"] = match_loss
+            other_losses["match"] = 10 * match_loss
 
         # nerf the strength of raw samples
         if "nerf_raw" in self.train_mode:
+            nerf_power = min(self.train_mode.nerf_raw, 0)
             for i in range(len(task_losses)):
                 for j in range(_b):
                     if comp[j] == "raw":
-                        task_losses[i][j] *= self.train_mode.nerf_raw
+                        task_losses[i][j] *= nerf_power
+                    else:
+                        task_losses[i][j] *= (2 - nerf_power)
 
         # temporal related losses
         if "temporal" in self.train_mode:
