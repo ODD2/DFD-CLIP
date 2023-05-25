@@ -1,5 +1,7 @@
+import pickle
 import random
 import logging
+import numpy as np
 from math import comb
 from itertools import combinations
 from collections import OrderedDict
@@ -233,6 +235,7 @@ class Decoder(nn.Module):
         self.ln_post = LayerNorm(width)
         self.drop_post = torch.nn.Dropout(config.dropout / 10)
         self.projections = []
+        self.guide_map = None
 
         for i, output_dim in enumerate(output_dims):
             _name = f"proj{i}x{output_dim}"
@@ -366,25 +369,36 @@ class Detector(nn.Module):
             patch_indices = None
             num_patch = kvs[0]["k"].shape[2]
             num_select = int(num_patch * self.train_mode.patch_mask.ratio)
-            if self.train_mode.patch_mask.type == "batch":
-                # discard patch localized out of the "batch" selected indices.
-                if patch_indices == None:
-                    patch_indices = random.sample(
-                        range(num_patch),
-                        num_select
-                    )
-            elif self.train_mode.patch_mask.type == "sample":
-                # discard patch localized out of the randomly selected indices.
-                patch_indices = random.sample(
-                    range(num_patch),
-                    num_select
-                )
-            else:
-                raise NotImplementedError()
 
             # partially discard patch kv pairs
             for i in range(len(kvs)):
                 for k in kvs[i]:
+                    if self.train_mode.patch_mask.type == "batch":
+                        # discard patch localized out of the "batch" selected indices.
+                        if patch_indices == None:
+                            patch_indices = np.random.choice(
+                                range(num_patch),
+                                num_select
+                            )
+                    elif self.train_mode.patch_mask.type == "sample":
+                        # discard patch localized out of the randomly selected indices.
+                        patch_indices = np.random.choice(
+                            range(num_patch),
+                            num_select
+                        )
+                    elif self.train_mode.patch_mask.type == "guide":
+                        if self.guide_map == None:
+                            with open(self.train_mode.patch_mask.path, "rb") as f:
+                                self.guide_map = pickle.load(f)
+
+                        patch_indices = random.sample(
+                            range(num_patch),
+                            num_select,
+                            p=self.guide_map[k][i].flatten()
+                        )
+                    else:
+                        raise NotImplementedError()
+
                     kvs[i][k] = kvs[i][k][:, :, patch_indices]
 
         task_logits, video_features = self.decoder(kvs, m)
