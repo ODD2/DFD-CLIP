@@ -14,6 +14,7 @@ import yaml
 
 from src.datasets import FFPP, CDF, DFDC
 from src.models import Detector
+from src.tools.notify import send_to_telegram
 
 
 def get_config(cfg_file, args):
@@ -165,6 +166,16 @@ def main(args):
 
     with open(path.join(root, f'stats_{timestamp}_{args.weight_mode}_{args.modality}.pickle'), "wb") as f:
         pickle.dump(stats, f)
+
+    send_to_telegram(f"Inference for '{root.split('/')[-1]}' Complete!")
+    send_to_telegram(
+        json.dumps(
+            report,
+            sort_keys=True,
+            indent=4,
+            separators=(',', ': ')
+        )
+    )
 
 
 if __name__ == "__main__":

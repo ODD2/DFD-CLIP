@@ -19,6 +19,7 @@ from src.evaluator import Evaluator, CompInvEvaluator
 from src.callbacks.timer import start_timer, end_timer
 from src.callbacks.metrics import init_metrics, update_metrics, compute_metrics
 from src.callbacks.tracking import update_trackers, cache_best_model
+from src.tools.notify import send_to_telegram
 
 
 PROJECT_DIR = None
@@ -273,6 +274,7 @@ def main(params):
         logging.info(f"Rename directory: {PROJECT_DIR} -> {WANDB_PROJECT_DIR}")
         os.rename(PROJECT_DIR, WANDB_PROJECT_DIR)
         wandb.finish()
+        send_to_telegram(f"Training Completed, Result Location: {WANDB_PROJECT_DIR}")
 
 
 def init_accelerator(config):
