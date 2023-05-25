@@ -333,37 +333,44 @@ class Detector(nn.Module):
 
     def predict(self, x, m, with_video_features=False, with_adapt_features=False, train=False):
         b, t, c, h, w = x.shape
-        patch_indices = None
+
         with torch.no_grad():
             # get key and value from each CLIP ViT layer
             kvs = self.encoder(x.flatten(0, 1))
             # discard original CLS token and restore temporal dimension
-            kvs = [{k: v[:, 1:].unflatten(0, (b, t)) for k, v in kv.items()} for kv in kvs]
-            if train and "patch_mask" in self.train_mode:
-                num_patch = kvs[0]["k"].shape[2]
-                num_select = int(num_patch * self.train_mode.patch_mask.ratio)
-                if self.train_mode.patch_mask.type == "batch":
-                    # discard patch localized out of the "batch" selected indices.
-                    if patch_indices == None:
-                        patch_indices = random.sample(
-                            range(num_patch),
-                            num_select
-                        )
-                elif self.train_mode.patch_mask.type == "sample":
-                    # discard patch localized out of the randomly selected indices.
-                    patch_indices = random.sample(
-                        range(num_patch),
-                        num_select
-                    )
-                else:
-                    raise NotImplementedError()
-                # partially discard patch kv pairs
-                kvs = [{k: v[:, :, patch_indices] for k, v in kv.items()} for kv in kvs]
+            for i in range(len(kvs)):
+                for k in kvs[i]:
+                    kvs[i][k] = kvs[i][k][:, 1:].unflatten(0, (b, t))
             # discard unwanted layers
             kvs = [kvs[i] for i in self.layer_indices]
 
         if self.adapter:
             kvs = self.adapter(kvs)
+
+        if train and "patch_mask" in self.train_mode:
+            patch_indices = None
+            num_patch = kvs[0]["k"].shape[2]
+            num_select = int(num_patch * self.train_mode.patch_mask.ratio)
+            if self.train_mode.patch_mask.type == "batch":
+                # discard patch localized out of the "batch" selected indices.
+                if patch_indices == None:
+                    patch_indices = random.sample(
+                        range(num_patch),
+                        num_select
+                    )
+            elif self.train_mode.patch_mask.type == "sample":
+                # discard patch localized out of the randomly selected indices.
+                patch_indices = random.sample(
+                    range(num_patch),
+                    num_select
+                )
+            else:
+                raise NotImplementedError()
+
+            # partially discard patch kv pairs
+            for i in range(len(kvs)):
+                for k in kvs[i]:
+                    kvs[i][k] = kvs[i][k][:, :, patch_indices]
 
         task_logits, video_features = self.decoder(kvs, m)
 
@@ -392,7 +399,8 @@ class Detector(nn.Module):
             x,
             m,
             with_video_features=True,
-            with_adapt_features=((not self.adapter == None) and ("compression" in self.train_mode))
+            with_adapt_features=((not self.adapter == None) and ("compression" in self.train_mode)),
+            train=train
         )
 
         video_features = features["video"]
