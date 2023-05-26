@@ -7,6 +7,7 @@ import cv2
 import math
 import traceback
 import logging
+import numpy as np
 from time import time
 from os import path, scandir, makedirs
 
@@ -190,6 +191,37 @@ class SessionMeta:
         return True
 
 
+class RandomDownScale(alb.core.transforms_interface.ImageOnlyTransform):
+    def __init__(self, ratio_list, always_apply=False, p=0.5):
+        super(RandomDownScale, self).__init__(always_apply, p)
+        self.ratio_list = ratio_list
+
+    def apply(self, image, scale=1.0, **params):
+        return self.randomdownscale(image, scale)
+
+    def randomdownscale(self, img, scale, **params):
+        keep_input_shape = True
+        H, W, C = img.shape
+        img_ds = cv2.resize(
+            img,
+            (int(W / scale), int(H / scale)),
+            interpolation=cv2.INTER_CUBIC
+        )
+
+        if keep_input_shape:
+            img_ds = cv2.resize(img_ds, (W, H), interpolation=cv2.INTER_LINEAR)
+
+        return img_ds
+
+    def get_params(self):
+        return {
+            "scale": np.random.randint(self.ratio_list[0], self.ratio_list[1] + 1)
+        }
+
+    def get_transform_init_args_names(self):
+        return ("ratio_list",)
+
+
 class FFPP(Dataset):
     @staticmethod
     def get_default_config():
@@ -289,11 +321,15 @@ class FFPP(Dataset):
                         [
                             alb.RGBShift((-20, 20), (-20, 20), (-20, 20), p=0.3),
                             alb.HueSaturationValue(
-                                hue_shift_limit=(-0.3, 0.3), sat_shift_limit=(-0.3, 0.3), val_shift_limit=(-0.3, 0.3), p=0.3),
+                                hue_shift_limit=(-0.3, 0.3), sat_shift_limit=(-0.3, 0.3), val_shift_limit=(-0.3, 0.3), p=0.3
+                            ),
                             alb.RandomBrightnessContrast(
-                                brightness_limit=(-0.2, 0.2), contrast_limit=(-0.2, 0.2), p=0.3),
+                                brightness_limit=(-0.2, 0.2), contrast_limit=(-0.2, 0.2), p=0.3
+                            ),
                             alb.ImageCompression(
-                                quality_lower=40, quality_upper=100, p=0.5),
+                                quality_lower=40, quality_upper=100, p=0.5
+                            ),
+                            RandomDownScale([2, 4], p=0.3),
                             alb.HorizontalFlip()
                         ],
                         p=1.
@@ -308,7 +344,8 @@ class FFPP(Dataset):
                             alb.RandomBrightnessContrast(
                                 brightness_limit=(-0.05, 0.05), contrast_limit=(-0.05, 0.05), p=0.3),
                             alb.ImageCompression(
-                                quality_lower=80, quality_upper=100, p=0.5)
+                                quality_lower=80, quality_upper=100, p=0.5
+                            ),
                         ],
                         p=1.0
                     )
@@ -322,10 +359,11 @@ class FFPP(Dataset):
                 # frame augmentation
                 if (not self.frame_augmentation == None):
                     if ("frame" in replay):
-                        assert len(replay["frame"]) == len(
-                            x), "Error! the number of frame replay should match the number of frames"
-                        x = [alb.ReplayCompose.replay(_r, image=_x)[
-                            "image"] for _x, _r in zip(x, replay["frame"])]
+                        assert len(replay["frame"]) == len(x), "Error! frame replay should match the number of frames"
+                        x = [
+                            alb.ReplayCompose.replay(_r, image=_x)["image"] for _x, _r in zip(x, replay["frame"])
+                        ]
+
                     else:
                         replay["frame"] = [None for _ in x]
                         for i, _x in enumerate(x):
