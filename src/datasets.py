@@ -207,9 +207,9 @@ class RandomDownScale(alb.core.transforms_interface.ImageOnlyTransform):
             (int(W / scale), int(H / scale)),
             interpolation=cv2.INTER_CUBIC
         )
-
+        logging.debug(f"Downscale Ratio: {scale}")
         if keep_input_shape:
-            img_ds = cv2.resize(img_ds, (W, H), interpolation=cv2.INTER_LINEAR)
+            img_ds = cv2.resize(img_ds, (W, H), interpolation=cv2.INTER_CUBIC)
 
         return img_ds
 
@@ -319,7 +319,9 @@ class FFPP(Dataset):
                 if "normal" in config.augmentation:
                     self.sequence_augmentation = alb.ReplayCompose(
                         [
-                            alb.RGBShift((-20, 20), (-20, 20), (-20, 20), p=0.3),
+                            alb.RGBShift(
+                                (-20, 20), (-20, 20), (-20, 20), p=0.3
+                            ),
                             alb.HueSaturationValue(
                                 hue_shift_limit=(-0.3, 0.3), sat_shift_limit=(-0.3, 0.3), val_shift_limit=(-0.3, 0.3), p=0.3
                             ),
@@ -329,7 +331,9 @@ class FFPP(Dataset):
                             alb.ImageCompression(
                                 quality_lower=40, quality_upper=100, p=0.5
                             ),
-                            RandomDownScale([2, 4], p=0.3),
+                            RandomDownScale(
+                                ratio_list=[2, 2], p=0.3
+                            ),
                             alb.HorizontalFlip()
                         ],
                         p=1.
