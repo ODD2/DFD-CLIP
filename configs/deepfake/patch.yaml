@@ -68,7 +68,7 @@ model:
       x: 256
     type: normal
   architecture: ViT-B/16
-  decode_indices: [4,5,6,7,8,9,10]
+  decode_indices: [6,7,8,9,10,11]
   decode_mode: index
   decode_stride: 2
   dropout: 0.5
@@ -100,7 +100,7 @@ trainer:
   batch_size: 12
   ema_ratio: 0.999
   learning_rate: 0.003
-  max_steps: 3000
+  max_steps: 6000
   metrics:
   - name: deepfake/ffpp
     types:

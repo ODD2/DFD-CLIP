@@ -235,7 +235,6 @@ class Decoder(nn.Module):
         self.ln_post = LayerNorm(width)
         self.drop_post = torch.nn.Dropout(config.dropout / 10)
         self.projections = []
-        self.guide_map = None
 
         for i, output_dim in enumerate(output_dims):
             _name = f"proj{i}x{output_dim}"
@@ -349,6 +348,10 @@ class Detector(nn.Module):
                 requires_grad=True
             )
 
+        if ("patch_mask" in self.train_mode and self.train_mode.patch_mask.type == "guide"):
+            with open(self.train_mode.patch_mask.path, "rb") as f:
+                self.guide_map = pickle.load(f)
+
     def predict(self, x, m, with_video_features=False, with_adapt_features=False, train=False):
         b, t, c, h, w = x.shape
 
@@ -375,7 +378,7 @@ class Detector(nn.Module):
                 for k in kvs[i]:
                     if self.train_mode.patch_mask.type == "batch":
                         # discard patch localized out of the "batch" selected indices.
-                        if patch_indices == None:
+                        if type(patch_indices) == type(None):
                             patch_indices = np.random.choice(
                                 range(num_patch),
                                 num_select
@@ -387,13 +390,10 @@ class Detector(nn.Module):
                             num_select
                         )
                     elif self.train_mode.patch_mask.type == "guide":
-                        if self.guide_map == None:
-                            with open(self.train_mode.patch_mask.path, "rb") as f:
-                                self.guide_map = pickle.load(f)
-
-                        patch_indices = random.sample(
+                        patch_indices = np.random.choice(
                             range(num_patch),
                             num_select,
+                            replace=False,
                             p=self.guide_map[k][i].flatten()
                         )
                     else:
