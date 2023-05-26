@@ -331,9 +331,9 @@ class FFPP(Dataset):
                             alb.ImageCompression(
                                 quality_lower=40, quality_upper=100, p=0.5
                             ),
-                            RandomDownScale(
-                                ratio_list=[2, 2], p=0.3
-                            ),
+                            # RandomDownScale(
+                            #     ratio_list=[2, 2], p=0.3
+                            # ),
                             alb.HorizontalFlip()
                         ],
                         p=1.
