@@ -326,7 +326,7 @@ class FFPP(Dataset):
                                 hue_shift_limit=(-0.3, 0.3), sat_shift_limit=(-0.3, 0.3), val_shift_limit=(-0.3, 0.3), p=0.3
                             ),
                             alb.RandomBrightnessContrast(
-                                brightness_limit=(-0.2, 0.2), contrast_limit=(-0.2, 0.2), p=0.3
+                                brightness_limit=(-0.3, 0.3), contrast_limit=(-0.3, 0.3), p=0.3
                             ),
                             alb.ImageCompression(
                                 quality_lower=40, quality_upper=100, p=0.5
