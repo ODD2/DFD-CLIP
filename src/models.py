@@ -165,13 +165,12 @@ class ResidualAttentionBlock(nn.Module):
         if ("concat_ref" in config and config.concat_ref):
             current_layer = layer_indices[block_index]
             self.ln_1.load_state_dict(reference_layers[current_layer].ln_1.state_dict())
+            self.ln_2.load_state_dict(reference_layers[current_layer].ln_2.state_dict())
             if (block_index < (len(layer_indices) - 1)):
                 concat_layer = layer_indices[block_index + 1] - 1
                 self.mlp.load_state_dict(reference_layers[concat_layer].mlp.state_dict())
-                self.ln_2.load_state_dict(reference_layers[concat_layer].ln_2.state_dict())
             else:
                 self.mlp.load_state_dict(reference_layers[current_layer].mlp.state_dict())
-                self.ln_2.load_state_dict(reference_layers[current_layer].ln_2.state_dict())
         else:
             current_layer = layer_indices[block_index]
             self.ln_1.load_state_dict(reference_layers[current_layer].ln_1.state_dict())
@@ -283,6 +282,7 @@ class Detector(nn.Module):
         C.decode_indices = []
         C.out_dim = []
         C.losses = []
+        C.concat_ref = 0
         # adapter configurations
         C.adapter = CN(new_allowed=True)
         C.adapter.type = "none"
@@ -390,7 +390,7 @@ class Detector(nn.Module):
                         range(num_patch),
                         num_select,
                         replace=False,
-                        p=self.guide_map[k][i].flatten()
+                        p=self.guide_map['v'][i].flatten()
                     )
                 else:
                     raise NotImplementedError()
