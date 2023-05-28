@@ -205,7 +205,7 @@ class Decoder(nn.Module):
         self.class_embedding = nn.Parameter(scale * torch.randn(width))
         self.positional_embedding = nn.Parameter(scale * torch.randn(num_frames, 1, heads, width // heads))
         self.ln_pre = LayerNorm(width)
-        self.drop_pre = torch.nn.Dropout(config.dropout)
+        self.drop_pre = torch.nn.Dropout(config.dropout / 10)
         self.transformer = Transformer(
             width,
             heads,
@@ -216,7 +216,7 @@ class Decoder(nn.Module):
             ],
         )
         self.ln_post = LayerNorm(width)
-        self.drop_post = torch.nn.Dropout(config.dropout)
+        self.drop_post = torch.nn.Dropout(config.dropout / 10)
         self.projections = []
 
         for i, output_dim in enumerate(output_dims):
@@ -235,9 +235,9 @@ class Decoder(nn.Module):
         ]
 
         x = self.class_embedding.view(1, 1, -1).repeat(kvs[0]['k'].size(0), 1, 1)
-        x = self.ln_pre(self.drop_pre(x))
+        x = self.drop_pre(self.ln_pre(x))
         x = self.transformer(x, kvs, m)
-        x = self.ln_post(self.drop_post(x))
+        x = self.drop_post(self.ln_post(x))
         video_feature = x.squeeze(1)
         task_logits = [video_feature @ projection for projection in self.projections]
 
@@ -629,6 +629,29 @@ class CompInvAdapter(nn.Module):
                             torch.nn.Linear(inner_dim, width, bias=False),
                             torch.nn.Dropout(config.dropout)
                         )
+                    )
+                elif (config.adapter.struct.type == "768-x-768-z0"):
+                    inner_dim = int(config.adapter.struct.x)
+                    # create module
+                    module = torch.nn.Sequential(
+                        torch.nn.LayerNorm(inner_dim),
+                        torch.nn.Linear(width, inner_dim, bias=False),
+                        torch.nn.LayerNorm(inner_dim),
+                        torch.nn.GELU(),
+                        torch.nn.Dropout(config.dropout / 10),
+                        torch.nn.Linear(inner_dim, width, bias=False),
+                        torch.nn.Dropout(config.dropout)
+                    )
+
+                    # initialize with zero weight
+                    module[1].weight.data.zero_()
+                    module[-2].weight.data.zero_()
+
+                    # set attribute
+                    setattr(
+                        self,
+                        _name,
+                        module
                     )
                 elif (config.adapter.struct.type == "768-bn"):
                     setattr(
