@@ -133,7 +133,7 @@ class ResidualAttentionBlock(nn.Module):
     https://github.com/openai/CLIP/blob/d50d76daa670286dd6cacf3bcd80b5e4823fc8e1/clip/model.py#L171
     """
 
-    def __init__(self, d_model: int, n_head: int, config, reference_layer: nn.Module):
+    def __init__(self, d_model: int, n_head: int, config, block_index, layer_indices, reference_layers):
         super().__init__()
 
         self.attn = MultiheadAttention(d_model, n_head)
@@ -146,7 +146,7 @@ class ResidualAttentionBlock(nn.Module):
         ]))
         self.ln_2 = LayerNorm(d_model)
 
-        self._apply_reference(reference_layer)
+        self._apply_reference(config, block_index, layer_indices, reference_layers)
 
     def attention(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, m: torch.Tensor):
         return self.attn(q, k, v, m)
@@ -156,13 +156,25 @@ class ResidualAttentionBlock(nn.Module):
         x = x + self.mlp(self.ln_2(x))
         return x
 
-    def _apply_reference(self, ref: nn.Module):
+    def _apply_reference(self, config, block_index, layer_indices, reference_layers):
         """
         use CLIP weights to initialize decoder
         """
-        self.ln_1.load_state_dict(ref.ln_1.state_dict())
-        self.mlp.load_state_dict(ref.mlp.state_dict())
-        self.ln_2.load_state_dict(ref.ln_2.state_dict())
+        if ("concat_ref" in config and config.concat_ref):
+            current_layer = layer_indices[block_index]
+            self.ln_1.load_state_dict(reference_layers[current_layer].ln_1.state_dict())
+            if (block_index < (len(layer_indices) - 1)):
+                concat_layer = layer_indices[block_index + 1] - 1
+                self.mlp.load_state_dict(reference_layers[concat_layer].mlp.state_dict())
+                self.ln_2.load_state_dict(reference_layers[concat_layer].ln_2.state_dict())
+            else:
+                self.mlp.load_state_dict(reference_layers[current_layer].mlp.state_dict())
+                self.ln_2.load_state_dict(reference_layers[current_layer].ln_2.state_dict())
+        else:
+            current_layer = layer_indices[block_index]
+            self.ln_1.load_state_dict(reference_layers[current_layer].ln_1.state_dict())
+            self.mlp.load_state_dict(reference_layers[current_layer].mlp.state_dict())
+            self.ln_2.load_state_dict(reference_layers[current_layer].ln_2.state_dict())
 
 
 class Transformer(nn.Module):
@@ -171,12 +183,17 @@ class Transformer(nn.Module):
     https://github.com/openai/CLIP/blob/d50d76daa670286dd6cacf3bcd80b5e4823fc8e1/clip/model.py#L195
     """
 
-    def __init__(self, width: int, heads: int, config, reference_layers: nn.Sequential):
+    def __init__(self, width: int, heads: int, config, layer_indices, reference_layers):
         super().__init__()
         self.width = width
         self.resblocks = []
-        for layer in reference_layers:
-            self.resblocks.append(ResidualAttentionBlock(width, heads, config, layer))
+        for block_index in range(len(layer_indices)):
+            self.resblocks.append(
+                ResidualAttentionBlock(
+                    width, heads, config,
+                    block_index, layer_indices, reference_layers
+                )
+            )
 
         self.resblocks = nn.Sequential(*self.resblocks)
 
@@ -210,10 +227,8 @@ class Decoder(nn.Module):
             width,
             heads,
             config,
-            reference_layers=[
-                detector.encoder.transformer.resblocks[i]
-                for i in detector.layer_indices
-            ],
+            layer_indices=detector.layer_indices,
+            reference_layers=detector.encoder.transformer.resblocks
         )
         self.ln_post = LayerNorm(width)
         self.drop_post = torch.nn.Dropout(config.dropout / 10)
