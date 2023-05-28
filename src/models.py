@@ -365,9 +365,6 @@ class Detector(nn.Module):
             # discard unwanted layers
             kvs = [kvs[i] for i in self.layer_indices]
 
-        if self.adapter:
-            kvs = self.adapter(kvs)
-
         if train and "patch_mask" in self.train_mode:
             patch_indices = None
             num_patch = kvs[0]["k"].shape[2]
@@ -375,31 +372,34 @@ class Detector(nn.Module):
 
             # partially discard patch kv pairs
             for i in range(len(kvs)):
-                for k in kvs[i]:
-                    if self.train_mode.patch_mask.type == "batch":
-                        # discard patch localized out of the "batch" selected indices.
-                        if type(patch_indices) == type(None):
-                            patch_indices = np.random.choice(
-                                range(num_patch),
-                                num_select
-                            )
-                    elif self.train_mode.patch_mask.type == "sample":
-                        # discard patch localized out of the randomly selected indices.
+                if self.train_mode.patch_mask.type == "batch":
+                    # discard patch localized out of the "batch" selected indices.
+                    if type(patch_indices) == type(None):
                         patch_indices = np.random.choice(
                             range(num_patch),
                             num_select
                         )
-                    elif self.train_mode.patch_mask.type == "guide":
-                        patch_indices = np.random.choice(
-                            range(num_patch),
-                            num_select,
-                            replace=False,
-                            p=self.guide_map[k][i].flatten()
-                        )
-                    else:
-                        raise NotImplementedError()
+                elif self.train_mode.patch_mask.type == "sample":
+                    # discard patch localized out of the randomly selected indices.
+                    patch_indices = np.random.choice(
+                        range(num_patch),
+                        num_select
+                    )
+                elif self.train_mode.patch_mask.type == "guide":
+                    patch_indices = np.random.choice(
+                        range(num_patch),
+                        num_select,
+                        replace=False,
+                        p=self.guide_map[k][i].flatten()
+                    )
+                else:
+                    raise NotImplementedError()
 
+                for k in kvs[i]:
                     kvs[i][k] = kvs[i][k][:, :, patch_indices]
+
+        if self.adapter:
+            kvs = self.adapter(kvs)
 
         task_logits, video_features = self.decoder(kvs, m)
 
