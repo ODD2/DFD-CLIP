@@ -10,6 +10,7 @@ data:
     name: FFPP
     pack: 0
     pair: 0
+    random_speed: 1
     root_dir: ./datasets/ffpp/
     scale: 1.0
     types:
@@ -36,6 +37,7 @@ data:
     name: FFPP
     pack: 0
     pair: 0
+    random_speed: 1
     root_dir: ./datasets/ffpp/
     scale: 1.0
     types:
@@ -64,11 +66,17 @@ model:
   adapter:
     frozen: 0
     struct:
-      type: 768-x-768-nln
+      type: 768-x-768-z0
       x: 256
     type: normal
   architecture: ViT-B/16
-  decode_indices: [6,7,8,9,10,11]
+  decode_indices:
+  - 0
+  - 4
+  - 7
+  - 9
+  - 10
+  - 11
   decode_mode: index
   decode_stride: 2
   dropout: 0.5
@@ -100,7 +108,7 @@ trainer:
   batch_size: 12
   ema_ratio: 0.999
   learning_rate: 0.003
-  max_steps: 6000
+  max_steps: 3000
   metrics:
   - name: deepfake/ffpp
     types:
