@@ -634,7 +634,6 @@ class CompInvAdapter(nn.Module):
                     inner_dim = int(config.adapter.struct.x)
                     # create module
                     module = torch.nn.Sequential(
-                        torch.nn.LayerNorm(inner_dim),
                         torch.nn.Linear(width, inner_dim, bias=False),
                         torch.nn.LayerNorm(inner_dim),
                         torch.nn.GELU(),
