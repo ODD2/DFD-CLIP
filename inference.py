@@ -151,8 +151,8 @@ def main(args):
         if accelerator.is_local_main_process:
             accuracy_calc.add_batch(references=[0, 1], predictions=[0, 1])
             roc_auc_calc.add_batch(references=[0, 1], prediction_scores=[0, 1])  # prob of real class
-            accuracy = accuracy_calc.compute()['accuracy']
-            roc_auc = roc_auc_calc.compute()['roc_auc']
+            accuracy = round(accuracy_calc.compute()['accuracy'], 3)
+            roc_auc = round(roc_auc_calc.compute()['roc_auc'], 3)
             print(f'accuracy: {accuracy}, roc_auc: {roc_auc}')
             report[test_dataset.__class__.__name__] = {
                 "accuracy": accuracy,
