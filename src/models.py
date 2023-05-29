@@ -390,7 +390,7 @@ class Detector(nn.Module):
                         range(num_patch),
                         num_select,
                         replace=False,
-                        p=self.guide_map['v'][i].flatten()
+                        p=self.guide_map['v'][self.layer_indices[i]].flatten()
                     )
                 else:
                     raise NotImplementedError()
