@@ -511,9 +511,10 @@ class FFPP(Dataset):
                 video_idx, df_type, comp, video_name, clips = self.__video_info(idx)
 
                 # while specified the target label, resample a video index to match.
-                if (not target_label == None and not target_label and not df_type == "REAL"):
-                    idx = random.randrange(0, len(self))
-                    continue
+                if (not target_label == None):
+                    if not (target_label == (not df_type == "REAL")):
+                        idx = random.randrange(0, len(self))
+                        continue
 
                 video_meta = self.video_table[df_type][comp][video_name]
                 video_offset_duration = (
