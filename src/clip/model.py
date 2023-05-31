@@ -172,6 +172,7 @@ class MultiheadAttention(nn.Module):
     '''
     Simple reimplementation of nn.MultiheadAttention with key, value return
     '''
+
     def __init__(self, embed_dim, n_head):
         super().__init__()
 
@@ -183,7 +184,7 @@ class MultiheadAttention(nn.Module):
 
     def forward(self, q, *_, **__):
         q, k, v = F.linear(q, self.in_proj_weight, self.in_proj_bias).chunk(3, dim=-1)
-        
+
         view_as = (*q.shape[:2], self.n_head, -1)
         q = q.view(*view_as)
         k = k.view(*view_as)
@@ -232,12 +233,15 @@ class Transformer(nn.Module):
         self.layers = layers
         self.resblocks = nn.Sequential(*[ResidualAttentionBlock(width, heads, attn_mask) for _ in range(layers)])
 
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: torch.Tensor, with_out=False):
         # key and value from each layer
         kvs = []
         for blk in self.resblocks:
-            a = blk(x) 
-            x = a.pop('out')
+            a = blk(x)
+            if (with_out):
+                x = a['out']
+            else:
+                x = a.pop('out')
             kvs.append(a)
 
         return kvs
@@ -264,15 +268,24 @@ class VisionTransformer(nn.Module):
         self.ln_post = LayerNorm(width)
         self.proj = nn.Parameter(scale * torch.randn(width, output_dim))
 
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: torch.Tensor, with_out=False):
         x = self.conv1(x)  # shape = [*, width, grid, grid]
         x = x.reshape(x.shape[0], x.shape[1], -1)  # shape = [*, width, grid ** 2]
         x = x.permute(0, 2, 1)  # shape = [*, grid ** 2, width]
-        x = torch.cat([self.class_embedding.to(x.dtype) + torch.zeros(x.shape[0], 1, x.shape[-1], dtype=x.dtype, device=x.device), x], dim=1)  # shape = [*, grid ** 2 + 1, width]
+        x = torch.cat(
+            [
+                self.class_embedding.to(x.dtype) + torch.zeros(
+                    x.shape[0],
+                    1,
+                    x.shape[-1],
+                    dtype=x.dtype, device=x.device
+                ),
+                x
+            ], dim=1)  # shape = [*, grid ** 2 + 1, width]
         x = x + self.positional_embedding.to(x.dtype)
         x = self.ln_pre(x)
 
-        return self.transformer(x)
+        return self.transformer(x, with_out)
 
 
 class CLIP(nn.Module):
@@ -436,12 +449,18 @@ def build_model(state_dict: dict):
 
     if vit:
         vision_width = state_dict["visual.conv1.weight"].shape[0]
-        vision_layers = len([k for k in state_dict.keys() if k.startswith("visual.") and k.endswith(".attn.in_proj_weight")])
+        vision_layers = len([
+            k for k in state_dict.keys()
+            if k.startswith("visual.") and k.endswith(".attn.in_proj_weight")
+        ])
         vision_patch_size = state_dict["visual.conv1.weight"].shape[-1]
         grid_size = round((state_dict["visual.positional_embedding"].shape[0] - 1) ** 0.5)
         image_resolution = vision_patch_size * grid_size
     else:
-        counts: list = [len(set(k.split(".")[2] for k in state_dict if k.startswith(f"visual.layer{b}"))) for b in [1, 2, 3, 4]]
+        counts: list = [
+            len(set(k.split(".")[2] for k in state_dict if k.startswith(f"visual.layer{b}")))
+            for b in [1, 2, 3, 4]
+        ]
         vision_layers = tuple(counts)
         vision_width = state_dict["visual.layer1.0.conv1.weight"].shape[0]
         output_width = round((state_dict["visual.attnpool.positional_embedding"].shape[0] - 1) ** 0.5)

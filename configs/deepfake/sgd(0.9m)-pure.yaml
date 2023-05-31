@@ -14,7 +14,7 @@ data:
     scale: 1.0
     types:
     - REAL
-    - NT
+    - DF
   - category: Deepfake
     name: DFDC
     pack: 0
@@ -40,9 +40,9 @@ data:
     scale: 1.0
     types:
     - REAL
-    - DF
-    - FS
     - F2F
+    - FS
+    - NT
 evaluator:
   batch_size: 24
   metrics:
@@ -102,7 +102,7 @@ tracking:
 trainer:
   batch_size: 12
   ema_ratio: 0.999
-  learning_rate: 0.0001
+  learning_rate: 0.003
   max_steps: 3000
   metrics:
   - name: deepfake/ffpp
