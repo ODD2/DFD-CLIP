@@ -222,7 +222,7 @@ class Decoder(nn.Module):
         self.class_embedding = nn.Parameter(scale * torch.randn(width))
         self.positional_embedding = nn.Parameter(scale * torch.randn(num_frames, 1, heads, width // heads))
         self.ln_pre = LayerNorm(width)
-        self.drop_pre = torch.nn.Dropout(config.dropout / 10)
+        self.drop_pre = torch.nn.Dropout(config.dropout)
         self.transformer = Transformer(
             width,
             heads,
@@ -231,7 +231,7 @@ class Decoder(nn.Module):
             reference_layers=detector.encoder.transformer.resblocks
         )
         self.ln_post = LayerNorm(width)
-        self.drop_post = torch.nn.Dropout(config.dropout / 10)
+        self.drop_post = torch.nn.Dropout(config.dropout)
         self.projections = []
 
         for i, output_dim in enumerate(output_dims):

@@ -4,7 +4,7 @@ data:
   - augmentation: none
     category: Deepfake
     compressions:
-    - c23
+    - raw
     contrast: 0
     detection_level: video
     name: FFPP
@@ -30,7 +30,7 @@ data:
   - augmentation: normal+frame
     category: Deepfake
     compressions:
-    - c23
+    - raw
     contrast: 1
     detection_level: video
     name: FFPP
@@ -69,9 +69,6 @@ model:
     type: normal
   architecture: ViT-B/16
   decode_indices:
-  - 6
-  - 7
-  - 8
   - 9
   - 10
   - 11
@@ -102,7 +99,7 @@ tracking:
 trainer:
   batch_size: 12
   ema_ratio: 0.999
-  learning_rate: 0.0001
+  learning_rate: 0.003
   max_steps: 3000
   metrics:
   - name: deepfake/ffpp
