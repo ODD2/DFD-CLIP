@@ -14,7 +14,7 @@ data:
     scale: 1.0
     types:
     - REAL
-    - DF
+    - NT
   - category: Deepfake
     name: DFDC
     pack: 0
@@ -41,8 +41,8 @@ data:
     types:
     - REAL
     - F2F
+    - DF
     - FS
-    - NT
 evaluator:
   batch_size: 24
   metrics:
@@ -64,7 +64,7 @@ model:
   adapter:
     frozen: 0
     struct:
-      type: 768-x-768-nln
+      type: 768-x-768-z0
       x: 256
     type: normal
   architecture: ViT-B/16
