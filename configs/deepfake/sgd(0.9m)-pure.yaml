@@ -79,9 +79,7 @@ model:
   decode_stride: 2
   dropout: 0.5
   losses:
-  - name: auc_roc
-    args:
-      label_smoothing: 0.1
+  - auc_roc
   name: Detector
   out_dim:
   - 2
