@@ -25,14 +25,15 @@ def kl_div(*args, **kargs):
     return driver
 
 
-def auc_roc(weight=None, *args, **kargs):
-    def driver(logits, y, _weight=weight):
+def auc_roc(weight=None, label_smoothing=0.0, *args, **kargs):
+    def driver(logits, y, _weight=weight, _label_smoothing=label_smoothing):
         if (_weight):
             _weight = torch.tensor(_weight, device=logits.device)
         return torch.nn.functional.cross_entropy(
             logits,
             y,
             weight=_weight,
+            label_smoothing=_label_smoothing,
             reduction='none'
         )
     return driver
