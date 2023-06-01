@@ -14,7 +14,7 @@ data:
     scale: 1.0
     types:
     - REAL
-    - DF
+    - NT
   - category: Deepfake
     name: DFDC
     pack: 0
@@ -40,9 +40,9 @@ data:
     scale: 1.0
     types:
     - REAL
-    - F2F
+    - DF
     - FS
-    - NT
+    - F2F
 evaluator:
   batch_size: 24
   metrics:
@@ -79,7 +79,9 @@ model:
   decode_stride: 2
   dropout: 0.5
   losses:
-  - auc_roc
+  - name: auc_roc
+    args:
+      label_smoothing: 0.1
   name: Detector
   out_dim:
   - 2
