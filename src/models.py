@@ -1,5 +1,7 @@
+import pickle
 import random
 import logging
+import numpy as np
 from math import comb
 from itertools import combinations
 from collections import OrderedDict
@@ -164,13 +166,12 @@ class ResidualAttentionBlock(nn.Module):
         if ("concat_ref" in config and config.concat_ref):
             current_layer = layer_indices[block_index]
             self.ln_1.load_state_dict(reference_layers[current_layer].ln_1.state_dict())
+            self.ln_2.load_state_dict(reference_layers[current_layer].ln_2.state_dict())
             if (block_index < (len(layer_indices) - 1)):
                 concat_layer = layer_indices[block_index + 1] - 1
                 self.mlp.load_state_dict(reference_layers[concat_layer].mlp.state_dict())
-                self.ln_2.load_state_dict(reference_layers[concat_layer].ln_2.state_dict())
             else:
                 self.mlp.load_state_dict(reference_layers[current_layer].mlp.state_dict())
-                self.ln_2.load_state_dict(reference_layers[current_layer].ln_2.state_dict())
         else:
             current_layer = layer_indices[block_index]
             self.ln_1.load_state_dict(reference_layers[current_layer].ln_1.state_dict())
@@ -282,6 +283,7 @@ class Detector(nn.Module):
         C.decode_indices = []
         C.out_dim = []
         C.losses = []
+        C.concat_ref = 0
         # adapter configurations
         C.adapter = CN(new_allowed=True)
         C.adapter.type = "none"
@@ -347,6 +349,10 @@ class Detector(nn.Module):
                 requires_grad=True
             )
 
+        if ("patch_mask" in self.train_mode and self.train_mode.patch_mask.type == "guide"):
+            with open(self.train_mode.patch_mask.path, "rb") as f:
+                self.guide_map = pickle.load(f)
+
     def predict(self, x, m, with_video_features=False, with_adapt_features=False, train=False):
         b, t, c, h, w = x.shape
 
@@ -360,33 +366,41 @@ class Detector(nn.Module):
             # discard unwanted layers
             kvs = [kvs[i] for i in self.layer_indices]
 
-        if self.adapter:
-            kvs = self.adapter(kvs)
-
         if train and "patch_mask" in self.train_mode:
             patch_indices = None
             num_patch = kvs[0]["k"].shape[2]
             num_select = int(num_patch * self.train_mode.patch_mask.ratio)
-            if self.train_mode.patch_mask.type == "batch":
-                # discard patch localized out of the "batch" selected indices.
-                if patch_indices == None:
-                    patch_indices = random.sample(
-                        range(num_patch),
-                        num_select
-                    )
-            elif self.train_mode.patch_mask.type == "sample":
-                # discard patch localized out of the randomly selected indices.
-                patch_indices = random.sample(
-                    range(num_patch),
-                    num_select
-                )
-            else:
-                raise NotImplementedError()
 
             # partially discard patch kv pairs
             for i in range(len(kvs)):
+                if self.train_mode.patch_mask.type == "batch":
+                    # discard patch localized out of the "batch" selected indices.
+                    if type(patch_indices) == type(None):
+                        patch_indices = np.random.choice(
+                            range(num_patch),
+                            num_select
+                        )
+                elif self.train_mode.patch_mask.type == "sample":
+                    # discard patch localized out of the randomly selected indices.
+                    patch_indices = np.random.choice(
+                        range(num_patch),
+                        num_select
+                    )
+                elif self.train_mode.patch_mask.type == "guide":
+                    patch_indices = np.random.choice(
+                        range(num_patch),
+                        num_select,
+                        replace=False,
+                        p=self.guide_map['v'][self.layer_indices[i]].flatten()
+                    )
+                else:
+                    raise NotImplementedError()
+
                 for k in kvs[i]:
                     kvs[i][k] = kvs[i][k][:, :, patch_indices]
+
+        if self.adapter:
+            kvs = self.adapter(kvs)
 
         task_logits, video_features = self.decoder(kvs, m)
 
