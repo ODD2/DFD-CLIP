@@ -32,6 +32,7 @@ data:
     compressions:
     - c23
     contrast: 1
+    ssl_fake: 1
     detection_level: video
     name: FFPP
     pack: 0
