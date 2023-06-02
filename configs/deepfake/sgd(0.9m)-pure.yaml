@@ -15,6 +15,7 @@ data:
     types:
     - REAL
     - NT
+    - NT
   - category: Deepfake
     name: DFDC
     pack: 0
@@ -64,7 +65,7 @@ model:
   adapter:
     frozen: 0
     struct:
-      type: 768-x-768-nln
+      type: 768-x-768-z0
       x: 256
     type: normal
   architecture: ViT-B/16

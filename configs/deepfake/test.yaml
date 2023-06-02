@@ -11,20 +11,20 @@ data:
     pack: 0
     pair: 0
     root_dir: ./datasets/ffpp/
-    scale: 0.1
+    scale: 1.0
     types:
     - REAL
-    - F2F
+    - NT
   - category: Deepfake
     name: DFDC
     pack: 0
     root_dir: ./datasets/dfdc/
-    scale: 0.01
+    scale: 0.1
   - category: Deepfake
     name: CDF
     pack: 0
     root_dir: ./datasets/cdf/
-    scale: 0.1
+    scale: 0.6
   num_frames: 20
   train:
   - augmentation: normal+frame
@@ -40,9 +40,9 @@ data:
     scale: 1.0
     types:
     - REAL
+    - F2F
     - DF
     - FS
-    - NT
 evaluator:
   batch_size: 24
   metrics:
@@ -84,10 +84,11 @@ model:
   out_dim:
   - 2
   train_mode: {}
+  aug_query: 1
   weight_decay: 0.01
 system:
   deterministic_training: true
-  evaluation_interval: 20
+  evaluation_interval: 300
   mixed_precision: 'no'
   seed: 0
   training_eval_interval: 10
@@ -103,7 +104,7 @@ trainer:
   batch_size: 12
   ema_ratio: 0.999
   learning_rate: 0.003
-  max_steps: 100
+  max_steps: 3000
   metrics:
   - name: deepfake/ffpp
     types:

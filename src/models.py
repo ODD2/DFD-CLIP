@@ -197,11 +197,21 @@ class Transformer(nn.Module):
                 )
             )
 
+        if "aug_query" in config and config.aug_query:
+            self.augment_query_embeddings = []
+            for i in range(len(layer_indices) - 1):
+                name = f"augment_query_{i}"
+                setattr(self, name, nn.Parameter(torch.zeros(width)))
+                self.augment_query_embeddings.append(getattr(self, name))
+
         self.resblocks = nn.Sequential(*self.resblocks)
 
     def forward(self, x: torch.Tensor, kvs, m):
-        for blk, kv in zip(self.resblocks, kvs):
+        for i, blk, kv in zip(range(len(self.resblocks)), self.resblocks, kvs):
             x = blk(x, kv['k'], kv['v'], m)
+
+            if not (i == len(self.resblocks) - 1):
+                x = x + self.augment_query_embeddings[i]
 
         return x
 
@@ -220,7 +230,6 @@ class Decoder(nn.Module):
         heads = detector.encoder.heads
         output_dims = config.out_dim
         scale = width ** -0.5
-
         self.class_embedding = nn.Parameter(scale * torch.randn(width))
         self.positional_embedding = nn.Parameter(scale * torch.randn(num_frames, 1, heads, width // heads))
         self.ln_pre = LayerNorm(width)
@@ -275,7 +284,7 @@ class Detector(nn.Module):
     """
     @staticmethod
     def get_default_config():
-        C = CN()
+        C = CN(new_allowed=True)
         C.name = "Detector"
         C.architecture = 'ViT-B/16'
         C.decode_mode = "stride"
