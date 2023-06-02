@@ -238,6 +238,7 @@ class FFPP(Dataset):
         C.pair = 0
         C.contrast = 0
         C.ssl_fake = 0
+        C.contrast_pair = 0
         C.augmentation = "none"
         C.random_speed = 1
         return C
@@ -272,6 +273,7 @@ class FFPP(Dataset):
         self.pair = bool(config.pair)
         self.contrast = bool(config.contrast)
         self.ssl_fake = bool(config.ssl_fake)
+        self.contrast_pair = bool(config.contrast_pair)
         # available clips per data
         self.video_list = []
 
@@ -477,8 +479,11 @@ class FFPP(Dataset):
         for df_type in self.types:
             for comp in self.compressions:
                 comp_videos = []
-                adj_idxs = [i for inner in idxs for i in inner] if df_type == 'REAL' else [
-                    '_'.join(idx) for idx in idxs] + ['_'.join(reversed(idx)) for idx in idxs]
+                adj_idxs = (
+                    [i for inner in idxs for i in inner]
+                    if df_type == 'REAL' else
+                    ['_'.join(idx) for idx in idxs] + ['_'.join(reversed(idx)) for idx in idxs]
+                )
 
                 for idx in adj_idxs:
                     if idx in self.video_table[df_type][comp]:
@@ -492,8 +497,11 @@ class FFPP(Dataset):
 
         # stacking up the amount of data clips for further usage
         self.stack_video_clips = [0]
-        for _, _, _, i in self.video_list:
+        self.real_clip_idx = {}
+        for df_type, _, idx, i in self.video_list:
             self.stack_video_clips.append(self.stack_video_clips[-1] + i)
+            if df_type == "REAL":
+                self.real_clip_idx[idx] = [self.stack_video_clips[-2], self.stack_video_clips[-1] - 1]
         self.stack_video_clips.pop(0)
 
     def __len__(self):
@@ -524,6 +532,7 @@ class FFPP(Dataset):
                         speed.append(result["speed"])
             return frames, label, mask, speed, self.index
         elif (self.contrast):
+            result = []
             if (self.ssl_fake and random.random() > 0.5):
                 main_idx = idx
                 auxi_idx = random.randint(0, len(self))
@@ -531,13 +540,30 @@ class FFPP(Dataset):
                 result.append(self.get_dict(main_idx, target_label=False))
                 logging.debug("Random SSL Fake Samples Creating...")
                 result.append(self.get_dict(result[-1]["idx"], target_label=False, make_fake=True))
-                return *[[_r[name] for _r in result] for name in ["frames", "label", "mask", "speed"]], [self.index] * 2
+            elif (self.contrast_pair):
+                assert len(self.real_clip_idx) > 0, "Real Clip Index Cache Empty!!!"
+                while (True):
+                    try:
+                        while (True):
+                            _, df_type, _, vid_idx, _ = self.__video_info(idx)
+                            if (df_type == "REAL"):
+                                idx = random.randint(0, len(self))
+                                continue
+                            else:
+                                break
+                        main_label = (not df_type == "REAL")
+                        main_idx = idx
+                        auxi_idx = random.randint(*self.real_clip_idx[vid_idx.split('_')[-1]])
+                        result.append(self.get_dict(main_idx, block=True))
+                        result.append(self.get_dict(auxi_idx, block=True))
+                    except Exception as e:
+                        logging.debug("Cannot Form Constrastive Pair, Retry...")
+                        continue
             else:
                 _, df_type, _, _, _ = self.__video_info(idx)
                 main_label = (not df_type == "REAL")
                 main_idx = idx
                 auxi_idx = random.randint(0, len(self))
-                result = []
                 result.append(self.get_dict(main_idx, target_label=main_label))
                 result.append(self.get_dict(auxi_idx, target_label=(not main_label)))
 
