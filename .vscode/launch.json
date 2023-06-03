@@ -12,8 +12,9 @@
             "args": [
                 "--cfg",
                 // "configs/comp-inv-encoder/deepfake.yaml",
-                "configs/deepfake/sgd(0.9m)-pure.yaml",
+                // "configs/deepfake/sgd(0.9m)-pure.yaml",
                 // "configs/deepfake/sgd(0.9m)-pure-fp16.yaml",
+                "configs/deepfake/sgd(0.9m)-z0-pm-aq.yaml",
                 // "configs/deepfake/deepfake.yaml",
                 // "configs/deepfake/test.yaml",
                 // "configs/deepfake/2s(mode1):c23+resi+tune+dbal+5e-5.yaml",

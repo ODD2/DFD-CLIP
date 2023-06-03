@@ -394,7 +394,7 @@ class FFPP(Dataset):
 
         if self.ssl_fake:
             self.ssl_manipulation = alb.ReplayCompose(
-                alb.ElasticTransform(alpha=50, sigma=7, alpha_affine=0, p=1)
+                alb.ElasticTransform(alpha=50, sigma=8, alpha_affine=0, p=1)
             )
 
             def driver(x, replay={}):
