@@ -197,8 +197,8 @@ class Transformer(nn.Module):
                 )
             )
 
+        self.augment_query_embeddings = []
         if "aug_query" in config and config.aug_query:
-            self.augment_query_embeddings = []
             for i in range(len(layer_indices) - 1):
                 name = f"augment_query_{i}"
                 setattr(self, name, nn.Parameter(torch.zeros(width)))
@@ -210,8 +210,9 @@ class Transformer(nn.Module):
         for i, blk, kv in zip(range(len(self.resblocks)), self.resblocks, kvs):
             x = blk(x, kv['k'], kv['v'], m)
 
-            if not (i == len(self.resblocks) - 1):
-                x = x + self.augment_query_embeddings[i]
+            if len(self.augment_query_embeddings) > 0:
+                if not (i == len(self.resblocks) - 1):
+                    x = x + self.augment_query_embeddings[i]
 
         return x
 
