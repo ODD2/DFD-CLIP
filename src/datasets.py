@@ -236,6 +236,7 @@ class FFPP(Dataset):
         C.pack = 0
         C.pair = 0
         C.contrast = 0
+        C.ssl_fake = 0
         C.augmentation = "none"
         C.random_speed = 1
         return C
@@ -268,6 +269,7 @@ class FFPP(Dataset):
         self.pack = bool(config.pack)
         self.pair = bool(config.pair)
         self.contrast = bool(config.contrast)
+        self.ssl_fake = bool(config.ssl_fake)
         # available clips per data
         self.video_list = []
 
@@ -390,6 +392,25 @@ class FFPP(Dataset):
 
             self.augmentation = driver
 
+        if self.ssl_fake:
+            self.ssl_manipulation = alb.ReplayCompose(
+                alb.ElasticTransform(alpha=50, sigma=7, alpha_affine=0, p=1)
+            )
+
+            def driver(x, replay={}):
+                # transform to numpy, the alb required format
+                x = [_x.numpy().transpose((1, 2, 0)) for _x in x]
+                assert not self.ssl_manipulation == None, "The manipulation actions for SSL should not be None."
+                # ssl fake manipulation
+                if (not "ssl_fake" in replay):
+                    replay["ssl_fake"] = self.ssl_manipulation(image=x[0])["replay"]
+                x = [alb.ReplayCompose.replay(replay["ssl_fake"], image=_x)["image"] for _x in x]
+                # revert to tensor
+                x = [torch.from_numpy(_x.transpose((2, 0, 1))) for _x in x]
+                return x, replay
+
+            self.ssl_transform = driver
+
     def _build_video_table(self, accelerator):
         self.video_table = {}
 
@@ -491,19 +512,35 @@ class FFPP(Dataset):
                         speed.append(result["speed"])
             return frames, label, mask, speed, self.index
         elif (self.contrast):
-            _, df_type, _, _, _ = self.__video_info(idx)
-            main_label = (not df_type == "REAL")
-            main_idx = idx
-            auxi_idx = random.randint(0, len(self))
-            result = []
-            result.append(self.get_dict(main_idx, target_label=main_label))
-            result.append(self.get_dict(auxi_idx, target_label=(not main_label)))
+            if (self.ssl_fake and random.random() > 0.5):
+                main_idx = idx
+                auxi_idx = random.randint(0, len(self))
+                result = []
+                result.append(self.get_dict(main_idx, target_label=False))
+                logging.debug("Random SSL Fake Samples Creating...")
+                result.append(self.get_dict(result[-1]["idx"], target_label=False, make_fake=True))
+                return *[[_r[name] for _r in result] for name in ["frames", "label", "mask", "speed"]], [self.index] * 2
+            else:
+                _, df_type, _, _, _ = self.__video_info(idx)
+                main_label = (not df_type == "REAL")
+                main_idx = idx
+                auxi_idx = random.randint(0, len(self))
+                result = []
+                result.append(self.get_dict(main_idx, target_label=main_label))
+                result.append(self.get_dict(auxi_idx, target_label=(not main_label)))
+
             return *[[_r[name] for _r in result] for name in ["frames", "label", "mask", "speed"]], [self.index] * 2
+
         else:
             result = self.get_dict(idx)
             return result["frames"], result["label"], result["mask"], result["speed"], self.index
 
-    def get_dict(self, idx, block=False, target_label=None):
+    def get_dict(self, idx, block=False, target_label=None, make_fake=False):
+        assert not make_fake or self.ssl_fake == True, "enable make_fake with self.ssl_fake flag"
+        assert (
+            not make_fake or (make_fake and target_label == False)
+        ), "incorrect  parameter setting for make_fake and target_label"
+
         while (True):
             try:
                 # video_idx =  next(i for i,x in enumerate(self.stack_video_clips) if  idx < x)
@@ -578,6 +615,11 @@ class FFPP(Dataset):
                     # augment the data only while training.
                     if (self.split == "train"):
                         _frames, replay = self.augmentation(_frames, replay)
+                        logging.debug("Augmentations Applied.")
+                        if (make_fake):
+                            _frames, replay = self.ssl_transform(_frames, replay)
+                            logging.debug("SSL Make Fake Applied.")
+
                     # stack list of torch frames to tensor
                     _frames = torch.stack(_frames)
 
@@ -599,9 +641,10 @@ class FFPP(Dataset):
 
                 return {
                     "frames": frames,
-                    "label": 0 if df_type == "REAL" else 1,
+                    "label": 0 if (df_type == "REAL" and not make_fake) else 1,
                     "mask": mask,
-                    "speed": video_speed_factor
+                    "speed": video_speed_factor,
+                    "idx": idx
                 }
             except Exception as e:
                 logging.error(f"Error occur: {e}")
