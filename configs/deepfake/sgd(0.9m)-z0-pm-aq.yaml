@@ -31,8 +31,8 @@ data:
     category: Deepfake
     compressions:
     - c23
-    contrast: 0
-    ssl_fake: 0.5
+    contrast: 1
+    ssl_fake: 1
     detection_level: video
     name: FFPP
     pack: 0
@@ -107,7 +107,7 @@ tracking:
   project_name: deepfake
   tool: wandb
 trainer:
-  batch_size: 24
+  batch_size: 12
   ema_ratio: 0.999
   learning_rate: 0.003
   max_steps: 3000
