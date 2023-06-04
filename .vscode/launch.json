@@ -45,9 +45,13 @@
             "request": "launch",
             "module": "inference",
             "args": [
-                "/home/od/Desktop/repos/dfd-clip/logs/test/0515T0724",
+                "/home/od/Desktop/repos/dfd-clip/logs/test/classic-puddle-508",
                 "--modality",
-                "video"
+                "video",
+                "--batch_size",
+                "16",
+                "--cfg_name",
+                "setting"
                 // "--test",
                 // "--aux_file",
                 // "/home/od/Desktop/repos/dfd-clip/configs/inference/all.yaml"

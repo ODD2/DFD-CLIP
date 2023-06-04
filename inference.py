@@ -1,7 +1,8 @@
-import argparse
-from os import path, makedirs
-import pickle
 import json
+import pickle
+import argparse
+import logging
+from os import path, makedirs
 from datetime import datetime
 
 from accelerate import Accelerator
@@ -75,6 +76,7 @@ def main(args):
         # prepare model and dataset
         model = Detector(config.model, config.data.num_frames, accelerator).to(accelerator.device).eval()
         ds_cfg.pack = 1
+
         test_dataset = globals()[ds_cfg.name](
             ds_cfg,
             config.data.num_frames,
@@ -84,13 +86,14 @@ def main(args):
             split='test',
             index=config.target_task,
         )
+
         stats[ds_cfg.name] = {
             "label": [],
             "prob": []
         }
         test_dataloader = accelerator.prepare(DataLoader(
             test_dataset, num_workers=args.num_workers, collate_fn=collate_fn))
-        accelerator.print(f'Dataset {test_dataset.__class__.__name__} initialized with {len(test_dataset)} samples\n')
+        logging.info(f'Dataset {test_dataset.__class__.__name__} initialized with {len(test_dataset)} samples\n')
         with accelerator.main_process_first():
             model.load_state_dict(torch.load(path.join(root, f'{args.weight_mode}_weights.pt')))
 
@@ -100,8 +103,11 @@ def main(args):
 
         N = args.batch_size
         progress_bar = tqdm(test_dataloader, disable=not accelerator.is_local_main_process)
-        for data in progress_bar:
+        for i, data in enumerate(progress_bar):
             clips, label, masks, task_index = *data[:3], data[-1]
+            if (len(clips) == 0):
+                logging.error(f"Sample Index: {i} Cannot Provide Clip for Inference, Skipping...")
+                continue
             logits = []
             for i in range(0, len(clips), N):
                 logits.append(
@@ -153,7 +159,7 @@ def main(args):
             roc_auc_calc.add_batch(references=[0, 1], prediction_scores=[0, 1])  # prob of real class
             accuracy = round(accuracy_calc.compute()['accuracy'], 3)
             roc_auc = round(roc_auc_calc.compute()['roc_auc'], 3)
-            print(f'accuracy: {accuracy}, roc_auc: {roc_auc}')
+            logging.info(f'accuracy: {accuracy}, roc_auc: {roc_auc}')
             report[test_dataset.__class__.__name__] = {
                 "accuracy": accuracy,
                 "roc_auc": roc_auc
@@ -162,20 +168,13 @@ def main(args):
     # save report and stats.
     timestamp = datetime.utcnow().strftime("%m%dT%H%M")
     with open(path.join(root, f'report_{timestamp}_{args.weight_mode}_{args.modality}.json'), "w") as f:
-        json.dump(report, f)
+        json.dump(report, f, sort_keys=True, indent=4, separators=(',', ': '))
 
     with open(path.join(root, f'stats_{timestamp}_{args.weight_mode}_{args.modality}.pickle'), "wb") as f:
         pickle.dump(stats, f)
 
     send_to_telegram(f"Inference for '{root.split('/')[-1]}' Complete!")
-    send_to_telegram(
-        json.dumps(
-            report,
-            sort_keys=True,
-            indent=4,
-            separators=(',', ': ')
-        )
-    )
+    send_to_telegram(json.dumps(report, sort_keys=True, indent=4, separators=(',', ': ')))
 
 
 if __name__ == "__main__":
