@@ -14,9 +14,9 @@
                 // "configs/comp-inv-encoder/deepfake.yaml",
                 // "configs/deepfake/sgd(0.9m)-pure.yaml",
                 // "configs/deepfake/sgd(0.9m)-pure-fp16.yaml",
-                "configs/deepfake/sgd(0.9m)-z0-pm-aq.yaml",
+                // "configs/deepfake/sgd(0.9m)-z0-pm-aq.yaml",
                 // "configs/deepfake/deepfake.yaml",
-                // "configs/deepfake/test.yaml",
+                "configs/deepfake/test.yaml",
                 // "configs/deepfake/2s(mode1):c23+resi+tune+dbal+5e-5.yaml",
                 // "/home/od/Desktop/repos/dfd-clip/configs/deepfake/2s(mode1):c23+resi+tune+dbal+5e-5+2s20f+reg_viral(hf,s,pfa).yaml",
                 // "configs/deepfake/2s(mode1):c23+resi+tune+dbal+5e-5+4s20f+reg_viral(hf,s,pfa)-e2e.yaml",
@@ -54,5 +54,12 @@
             ],
             "justMyCode": false
         },
+        {
+            "name": "Python: Pipeline",
+            "type": "python",
+            "request": "launch",
+            "module": "pipeline",
+            "justMyCode": true
+        }
     ]
 }

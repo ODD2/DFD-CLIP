@@ -15,7 +15,6 @@ data:
     types:
     - REAL
     - NT
-    - NT
   - category: Deepfake
     name: DFDC
     pack: 0

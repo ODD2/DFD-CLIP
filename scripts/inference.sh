@@ -1,1 +1,1 @@
-python -m inference $1 --batch_size=16 --modality=$2  --weight_mode=$3
+python -m inference $1 --batch_size=16 --modality=$2  --weight_mode=$3 --cfg_name=setting
