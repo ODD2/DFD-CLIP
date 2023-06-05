@@ -63,7 +63,7 @@ class Attention(nn.Module):
 
 
 class MemEffAttention(Attention):
-    def forward(self, x: Tensor, attn_bias=None) -> Tensor:
+    def forward(self, x: Tensor, attn_bias=None,ret_dict=False) -> Tensor:
         if not XFORMERS_AVAILABLE:
             assert attn_bias is None, "xFormers is required for nested tensors usage"
             return super().forward(x)
@@ -78,4 +78,8 @@ class MemEffAttention(Attention):
 
         x = self.proj(x)
         x = self.proj_drop(x)
-        return x
+        
+        if(ret_dict):
+            return dict(out=x,q=q,k=k,v=v)
+        else:
+            return x

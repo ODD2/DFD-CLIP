@@ -79,9 +79,15 @@ class Block(nn.Module):
 
         self.sample_drop_ratio = drop_path
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(self, x: Tensor,ret_dict=False) -> Tensor:
         def attn_residual_func(x: Tensor) -> Tensor:
-            return self.ls1(self.attn(self.norm1(x)))
+            _x = self.attn(self.norm1(x),ret_dict=ret_dict)
+            if(not ret_dict):
+                return self.ls1(_x)
+            else:
+                _x["out"] = self.ls1(_x["out"])
+                return _x
+
 
         def ffn_residual_func(x: Tensor) -> Tensor:
             return self.ls2(self.mlp(self.norm2(x)))
@@ -92,18 +98,50 @@ class Block(nn.Module):
                 x,
                 residual_func=attn_residual_func,
                 sample_drop_ratio=self.sample_drop_ratio,
+                ret_dict=ret_dict
             )
+
+            if ret_dict:
+                _x = x
+                x = _x["out"]
+
             x = drop_add_residual_stochastic_depth(
                 x,
                 residual_func=ffn_residual_func,
                 sample_drop_ratio=self.sample_drop_ratio,
             )
+
+            if ret_dict:
+                _x["out"] = x
+                x = _x
+
         elif self.training and self.sample_drop_ratio > 0.0:
-            x = x + self.drop_path1(attn_residual_func(x))
+            x1 = attn_residual_func(x)
+
+            if(ret_dict):
+                _x = x1
+                x1 = _x["out"]
+
+            x = x + self.drop_path1(x1)
             x = x + self.drop_path1(ffn_residual_func(x))  # FIXME: drop_path2
+
+            if(ret_dict):
+                _x["out"] = x
+                x = _x
+
         else:
-            x = x + attn_residual_func(x)
+            x1 = attn_residual_func(x)
+
+            if(ret_dict):
+                _x = x1
+                x1 = _x["out"]
+
+            x = x + x1
             x = x + ffn_residual_func(x)
+
+            if(ret_dict):
+                _x["out"] = x
+                x = _x
         return x
 
 
@@ -111,7 +149,12 @@ def drop_add_residual_stochastic_depth(
     x: Tensor,
     residual_func: Callable[[Tensor], Tensor],
     sample_drop_ratio: float = 0.0,
+    ret_dict = False
 ) -> Tensor:
+    if(ret_dict):
+        _x = x
+        x = x["out"]
+        
     # 1) extract subset using permutation
     b, n, d = x.shape
     sample_subset_size = max(int(b * (1 - sample_drop_ratio)), 1)
@@ -128,7 +171,13 @@ def drop_add_residual_stochastic_depth(
 
     # 3) add the residual
     x_plus_residual = torch.index_add(x_flat, 0, brange, residual.to(dtype=x.dtype), alpha=residual_scale_factor)
-    return x_plus_residual.view_as(x)
+    x = x_plus_residual.view_as(x)
+
+    if(ret_dict):
+        _x["out"] = x
+        return _x
+    else:
+        return x
 
 
 def get_branges_scales(x, sample_drop_ratio=0.0):
@@ -242,9 +291,9 @@ class NestedTensorBlock(Block):
             x = x + ffn_residual_func(x)
             return attn_bias.split(x)
 
-    def forward(self, x_or_x_list):
+    def forward(self, x_or_x_list,ret_dict=False):
         if isinstance(x_or_x_list, Tensor):
-            return super().forward(x_or_x_list)
+            return super().forward(x_or_x_list,ret_dict=ret_dict)
         elif isinstance(x_or_x_list, list):
             assert XFORMERS_AVAILABLE, "Please install xFormers for nested tensors usage"
             return self.forward_nested(x_or_x_list)
