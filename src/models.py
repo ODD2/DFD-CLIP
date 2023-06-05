@@ -13,6 +13,10 @@ from . import clip
 import torchvision.transforms as T
 
 
+class Object(object):
+    pass
+
+
 def mse(logits, y):
     value = torch.pow(
         logits[:, :140].softmax(dim=-1) @ torch.tensor([i for i in range(140)]).float().to(logits.device) - y,
@@ -269,6 +273,26 @@ class Decoder(nn.Module):
         task_logits = [video_feature @ projection for projection in self.projections]
 
         return task_logits, video_feature
+
+
+class DINOv2(nn.Module):
+    def __init__(self):
+
+        from src.dinov2.models.vision_transformer import DinoVisionTransformer, vit_base
+        super().__init__()
+        self.backbone = vit_base(img_size=518, patch_size=14, block_chunks=0, init_values=1.0, ffn_layer="mlp")
+        self.backbone.load_state_dict(torch.load("misc/dinov2_vitb14_pretrain.pth"))
+        # parameters
+        self.heads = 12
+        self.width = 64
+        self.input_resolution = 224
+        # interfaces
+        self.transformer = Object()
+        self.transformer.resblocks = self.backbone.blocks
+
+    def forward(self, x, feat_keys=["k", "v"], **args):
+        ret = self.backbone(x, **args)
+        return {k: ret[k] for k in feat_keys}
 
 
 class Detector(nn.Module):
