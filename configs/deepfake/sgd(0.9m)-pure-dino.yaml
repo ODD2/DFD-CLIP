@@ -86,6 +86,7 @@ model:
   - 2
   train_mode: {}
   weight_decay: 0.01
+  optimizer: adamw
 system:
   deterministic_training: false
   evaluation_interval: 300
@@ -103,7 +104,7 @@ tracking:
 trainer:
   batch_size: 9
   ema_ratio: 0.999
-  learning_rate: 0.003
+  learning_rate: 0.0003
   max_steps: 3000
   metrics:
   - name: deepfake/ffpp

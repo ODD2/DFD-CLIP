@@ -370,6 +370,8 @@ class Detector(nn.Module):
         # regularization
         C.dropout = 0.0
         C.weight_decay = 0.01
+        # optimizer
+        C.optimizer = "sgd"
         return C
 
     def __init__(self, config, num_frames, accelerator):
@@ -386,6 +388,7 @@ class Detector(nn.Module):
         self.decode_mode = config.decode_mode
         self.out_dim = config.out_dim
         self.weight_decay = config.weight_decay
+        self.optimizer = config.optimizer
         self.train_mode = config.train_mode
         self.losses = []
 
@@ -668,12 +671,20 @@ class Detector(nn.Module):
         return task_losses, task_logits, other_losses
 
     def configure_optimizers(self, lr):
-        return torch.optim.SGD(
-            params=[i for i in self.parameters() if i.requires_grad],
-            lr=lr,
-            weight_decay=self.weight_decay,
-            momentum=0.9
-        )
+        params = [i for i in self.parameters() if i.requires_grad]
+        if (self.optimizer == "sgd"):
+            return torch.optim.SGD(
+                params=params,
+                lr=lr,
+                weight_decay=self.weight_decay,
+                momentum=0.95
+            )
+        elif (self.optimizer == "adamw"):
+            return torch.optim.AdamW(
+                params=params,
+                lr=lr,
+                weight_decay=self.weight_decay
+            )
 
     def _transform(self, n_px):
         if (self.config.foundation == "clip"):
