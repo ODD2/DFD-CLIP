@@ -32,7 +32,6 @@ data:
     compressions:
     - c23
     contrast: 1
-    ssl_fake: 0
     detection_level: video
     name: FFPP
     pack: 0
@@ -45,7 +44,7 @@ data:
     - FS
     - F2F
 evaluator:
-  batch_size: 24
+  batch_size: 18
   metrics:
   - name: deepfake/ffpp
     types:
@@ -62,10 +61,11 @@ evaluator:
   name: Evaluator
   num_workers: 8
 model:
+  foundation: dinov2
   adapter:
     frozen: 0
     struct:
-      type: 768-x-768-mln
+      type: 768-x-768-z0
       x: 256
     type: normal
   architecture: ViT-B/16
@@ -87,7 +87,7 @@ model:
   train_mode: {}
   weight_decay: 0.01
 system:
-  deterministic_training: true
+  deterministic_training: false
   evaluation_interval: 300
   mixed_precision: 'no'
   seed: 0
@@ -101,7 +101,7 @@ tracking:
   project_name: deepfake
   tool: wandb
 trainer:
-  batch_size: 12
+  batch_size: 9
   ema_ratio: 0.999
   learning_rate: 0.003
   max_steps: 3000

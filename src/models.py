@@ -167,20 +167,54 @@ class ResidualAttentionBlock(nn.Module):
         """
         use CLIP weights to initialize decoder
         """
+        if config.foundation == "clip":
+            def fetch_ln1_params(layer_idx):
+                return reference_layers[layer_idx].ln_1.state_dict()
+
+            def fetch_ln2_params(layer_idx):
+                return reference_layers[layer_idx].ln_2.state_dict()
+
+            def fetch_mlp_params(layer_idx):
+                return reference_layers[layer_idx].mlp.state_dict()
+
+        elif config.foundation == "dinov2":
+            def fetch_ln1_params(layer_idx):
+                return reference_layers[layer_idx].norm1.state_dict()
+
+            def fetch_ln2_params(layer_idx):
+                return reference_layers[layer_idx].norm2.state_dict()
+
+            def fetch_mlp_params(layer_idx):
+                weights = reference_layers[layer_idx].mlp.state_dict()
+                name_convert = {"fc1": "c_fc", "fc2": "c_proj"}
+                mapped_weights = {}
+                for k, v in weights.items():
+                    mname = k.split('.')[0]
+                    if mname in name_convert:
+                        k = k.replace(mname, name_convert[mname])
+                    mapped_weights[k] = v
+
+                return mapped_weights
+            # def fetch_mlp_params(layer_idx):
+            #     return reference_layers[layer_idx].mlp.state_dict()
+
+        else:
+            raise NotImplementedError()
+
         if ("concat_ref" in config and config.concat_ref):
             current_layer = layer_indices[block_index]
-            self.ln_1.load_state_dict(reference_layers[current_layer].ln_1.state_dict())
-            self.ln_2.load_state_dict(reference_layers[current_layer].ln_2.state_dict())
+            self.ln_1.load_state_dict(fetch_ln1_params(current_layer))
+            self.ln_2.load_state_dict(fetch_ln2_params(current_layer))
             if (block_index < (len(layer_indices) - 1)):
                 concat_layer = layer_indices[block_index + 1] - 1
-                self.mlp.load_state_dict(reference_layers[concat_layer].mlp.state_dict())
+                self.mlp.load_state_dict(fetch_mlp_params(concat_layer))
             else:
-                self.mlp.load_state_dict(reference_layers[current_layer].mlp.state_dict())
+                self.mlp.load_state_dict(fetch_mlp_params(current_layer))
         else:
             current_layer = layer_indices[block_index]
-            self.ln_1.load_state_dict(reference_layers[current_layer].ln_1.state_dict())
-            self.mlp.load_state_dict(reference_layers[current_layer].mlp.state_dict())
-            self.ln_2.load_state_dict(reference_layers[current_layer].ln_2.state_dict())
+            self.ln_1.load_state_dict(fetch_ln1_params(current_layer))
+            self.mlp.load_state_dict(fetch_mlp_params(current_layer))
+            self.ln_2.load_state_dict(fetch_ln2_params(current_layer))
 
 
 class Transformer(nn.Module):
@@ -277,22 +311,31 @@ class Decoder(nn.Module):
 
 class DINOv2(nn.Module):
     def __init__(self):
-
-        from src.dinov2.models.vision_transformer import DinoVisionTransformer, vit_base
         super().__init__()
+        from dinov2.models.vision_transformer import vit_base
         self.backbone = vit_base(img_size=518, patch_size=14, block_chunks=0, init_values=1.0, ffn_layer="mlp")
         self.backbone.load_state_dict(torch.load("misc/dinov2_vitb14_pretrain.pth"))
-        # parameters
-        self.heads = 12
-        self.width = 64
-        self.input_resolution = 224
         # interfaces
         self.transformer = Object()
         self.transformer.resblocks = self.backbone.blocks
+        # parameters
+        self.heads = 12
+        self.width = 768
+        self.input_resolution = 224
+        self.block_num = len(self.transformer.resblocks)
 
     def forward(self, x, feat_keys=["k", "v"], **args):
-        ret = self.backbone(x, **args)
-        return {k: ret[k] for k in feat_keys}
+        ret = self.backbone(x, is_training=True, **args)
+        ret = {k: ret[k] for k in feat_keys}
+        # convert {k1:[x1 ... xN], k2:[x1...xN]} -> [{k1[1],k2[1]} ... {k1[N],k2[N]}]
+        ret = [
+            {
+                k: ret[k][i]
+                for k in ret
+            }
+            for i in range(self.block_num)
+        ]
+        return ret
 
 
 class Detector(nn.Module):
@@ -311,6 +354,7 @@ class Detector(nn.Module):
     def get_default_config():
         C = CN(new_allowed=True)
         C.name = "Detector"
+        C.foundation = "clip"
         C.architecture = 'ViT-B/16'
         C.decode_mode = "stride"
         C.decode_stride = 2
@@ -331,9 +375,13 @@ class Detector(nn.Module):
     def __init__(self, config, num_frames, accelerator):
         super().__init__()
         assert config.decode_mode in ["stride", "index"]
+        self.config = config
 
         with accelerator.main_process_first():
-            self.encoder = disable_gradients(clip.load(config.architecture)[0].visual.float())
+            if config.foundation == "clip":
+                self.encoder = disable_gradients(clip.load(config.architecture)[0].visual.float())
+            elif config.foundation == "dinov2":
+                self.encoder = disable_gradients(DINOv2())
 
         self.decode_mode = config.decode_mode
         self.out_dim = config.out_dim
@@ -628,17 +676,30 @@ class Detector(nn.Module):
         )
 
     def _transform(self, n_px):
-        """
-        Ported from:
-        https://github.com/openai/CLIP/blob/d50d76daa670286dd6cacf3bcd80b5e4823fc8e1/clip/clip.py#L79
-        """
-        return T.Compose([
-            T.Resize(n_px, interpolation=T.InterpolationMode.BICUBIC),
-            T.CenterCrop(n_px),
-            T.ConvertImageDtype(torch.float32),
-            T.Normalize((0.48145466, 0.4578275, 0.40821073),
-                        (0.26862954, 0.26130258, 0.27577711)),
-        ])
+        if (self.config.foundation == "clip"):
+            """
+            Ported from:
+            https://github.com/openai/CLIP/blob/d50d76daa670286dd6cacf3bcd80b5e4823fc8e1/clip/clip.py#L79
+            """
+            return T.Compose([
+                T.Resize(n_px, interpolation=T.InterpolationMode.BICUBIC),
+                T.CenterCrop(n_px),
+                T.ConvertImageDtype(torch.float32),
+                T.Normalize((0.48145466, 0.4578275, 0.40821073),
+                            (0.26862954, 0.26130258, 0.27577711)),
+            ])
+        elif (self.config.foundation == "dinov2"):
+            return T.Compose([
+                T.Resize(n_px, interpolation=T.InterpolationMode.BICUBIC),
+                T.CenterCrop(n_px),
+                T.ConvertImageDtype(torch.float32),
+                T.Normalize(
+                    (0.485, 0.456, 0.406),
+                    (0.229, 0.224, 0.225)
+                ),
+            ])
+        else:
+            raise NotImplementedError()
 
 
 class CompInvAdapter(nn.Module):
