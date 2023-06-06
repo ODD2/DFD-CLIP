@@ -2,6 +2,7 @@ import json
 import pickle
 import argparse
 import logging
+import warnings
 from os import path, makedirs
 from datetime import datetime
 
@@ -178,6 +179,7 @@ def main(args):
 
 
 if __name__ == "__main__":
+    warnings.filterwarnings(action="ignore")
     parser = argparse.ArgumentParser(description="Deepfake detector with foundation models.")
     parser.add_argument(
         "artifacts_dir",

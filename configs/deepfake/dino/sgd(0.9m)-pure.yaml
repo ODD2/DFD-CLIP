@@ -63,11 +63,11 @@ evaluator:
 model:
   foundation: dinov2
   adapter:
-    # frozen: 0
-    # struct:
-    #   type: 768-x-768-z0
-    #   x: 256
-    type: none
+    frozen: 0
+    struct:
+      type: 768-x-768-nln
+      x: 256
+    type: normal
   architecture: ViT-B/16
   decode_indices:
   - 6
