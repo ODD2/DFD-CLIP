@@ -311,11 +311,12 @@ def init_accelerator(config):
         with open(os.path.join(PROJECT_DIR, 'setting.yaml'), 'w') as f:
             f.write(config.dump())
 
-    # init tracker
+    # init tracker.
     wandb.init(project=project_name)
-    # save config
+    # save config.
     wandb.save(glob_str=os.path.join(PROJECT_DIR, 'setting.yaml'), policy="now")
-
+    # save run name in description.
+    wandb.run.notes = wandb.run.name
     return accelerator
 
 
