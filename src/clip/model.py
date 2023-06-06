@@ -255,6 +255,7 @@ class VisionTransformer(nn.Module):
         self.width = width
         self.layers = layers
         self.heads = heads
+        self.patch_size = patch_size
 
         self.conv1 = nn.Conv2d(in_channels=3, out_channels=width, kernel_size=patch_size, stride=patch_size, bias=False)
 

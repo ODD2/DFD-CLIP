@@ -33,6 +33,7 @@ class Trainer(_Trainer):
         # for teacher mode: ema_ratio and teach_at
         # C.mode_params.teach_at = 50
         # C.mode_params.ema_ratio = 0.999
+        C.lr_scheduler = "one_cycle"
         return C
 
     def __init__(self, config, accelerator, model, datasets):

@@ -63,11 +63,11 @@ evaluator:
 model:
   foundation: dinov2
   adapter:
-    frozen: 0
-    struct:
-      type: 768-x-768-z0
-      x: 256
-    type: normal
+    # frozen: 0
+    # struct:
+    #   type: 768-x-768-z0
+    #   x: 256
+    type: none
   architecture: ViT-B/16
   decode_indices:
   - 6
@@ -86,9 +86,9 @@ model:
   - 2
   train_mode: {}
   weight_decay: 0.01
-  optimizer: adamw
+  optimizer: sgd
 system:
-  deterministic_training: false
+  deterministic_training: true
   evaluation_interval: 300
   mixed_precision: 'no'
   seed: 0
@@ -103,8 +103,7 @@ tracking:
   tool: wandb
 trainer:
   batch_size: 9
-  ema_ratio: 0.999
-  learning_rate: 0.0003
+  learning_rate: 0.003
   max_steps: 3000
   metrics:
   - name: deepfake/ffpp
@@ -114,4 +113,3 @@ trainer:
   mode: normal
   name: Trainer
   num_workers: 8
-  teach_at: 50

@@ -327,7 +327,7 @@ def set_seed(seed):
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.benchmark = False
-    torch.use_deterministic_algorithms(True)
+    torch.use_deterministic_algorithms(True, warn_only=True)
 
 
 if __name__ == "__main__":
@@ -355,7 +355,12 @@ if __name__ == "__main__":
         import warnings
         logging.basicConfig(level="INFO")
         warnings.filterwarnings(action="ignore")
-        # warnings.simplefilter(action='ignore', category=RuntimeWarning)
+        # disable warnings from the xformers efficient attention module due to torch.user_deterministic_algorithms(True,warn_only=True)
+        warnings.filterwarnings(
+            action="ignore",
+            message=".*efficient_attention_forward_cutlass.*",
+            category=UserWarning
+        )
     else:
 
         logging.basicConfig(level="DEBUG")

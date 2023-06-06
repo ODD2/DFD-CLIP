@@ -44,7 +44,7 @@ data:
     - FS
     - F2F
 evaluator:
-  batch_size: 24
+  batch_size: 18
   metrics:
   - name: deepfake/ffpp
     types:
@@ -61,12 +61,13 @@ evaluator:
   name: Evaluator
   num_workers: 8
 model:
+  foundation: dinov2
   adapter:
-    frozen: 0
-    struct:
-      type: 768-x-768-nln
-      x: 256
-    type: normal
+    # frozen: 0
+    # struct:
+    #   type: 768-x-768-z0
+    #   x: 256
+    type: none
   architecture: ViT-B/16
   decode_indices:
   - 6
@@ -83,8 +84,12 @@ model:
   name: Detector
   out_dim:
   - 2
-  train_mode: {}
+  train_mode: 
+    patch_mask:
+      type:  sample
+      ratio: 0.2
   weight_decay: 0.01
+  optimizer: sgd
 system:
   deterministic_training: true
   evaluation_interval: 300
@@ -100,10 +105,10 @@ tracking:
   project_name: deepfake
   tool: wandb
 trainer:
-  batch_size: 12
+  batch_size: 11
   ema_ratio: 0.999
   learning_rate: 0.003
-  max_steps: 3000
+  max_steps: 6000
   metrics:
   - name: deepfake/ffpp
     types:

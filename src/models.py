@@ -322,6 +322,7 @@ class DINOv2(nn.Module):
         self.heads = 12
         self.width = 768
         self.input_resolution = 224
+        self.patch_size = 14
         self.block_num = len(self.transformer.resblocks)
 
     def forward(self, x, feat_keys=["k", "v"], **args):
@@ -717,6 +718,7 @@ class CompInvAdapter(nn.Module):
     def __init__(self, config, detector, num_frames=50):
         super().__init__()
         width = detector.encoder.width
+        patches = (detector.encoder.input_resolution // detector.encoder.patch_size)**2
         self.layer_blocks = []
         for i in range(len(detector.layer_indices)):
             blk = {}
@@ -753,12 +755,13 @@ class CompInvAdapter(nn.Module):
                     )
                 elif (config.adapter.struct.type == "768-x-768-nln"):
                     inner_dim = int(config.adapter.struct.x)
+
                     setattr(
                         self,
                         _name,
                         torch.nn.Sequential(
                             torch.nn.Linear(width, inner_dim, bias=False),
-                            torch.nn.LayerNorm((196, inner_dim)),
+                            torch.nn.LayerNorm((patches, inner_dim)),
                             torch.nn.GELU(),
                             torch.nn.Dropout(config.dropout / 10),
 
