@@ -258,8 +258,8 @@ class FFPP(Dataset):
         self.name = config.name.lower()
         self.root = path.expanduser(config.root_dir)
         self.vid_ext = config.vid_ext
-        self.types = set(config.types)
-        self.compressions = set(config.compressions)
+        self.types = sorted(set(config.types), reverse=True)
+        self.compressions = sorted(set(config.compressions), reverse=True)
         self.num_frames = num_frames
         self.clip_duration = clip_duration
         self.split = split
@@ -472,7 +472,8 @@ class FFPP(Dataset):
 
         with open(path.join(self.root, 'splits', f'{self.split}.json')) as f:
             idxs = json.load(f)
-
+        logging.debug(f"DF TYPES:{self.types}")
+        logging.debug(f"DF TYPES:{self.compressions}")
         for df_type in self.types:
             for comp in self.compressions:
                 comp_videos = []

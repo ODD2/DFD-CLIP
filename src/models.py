@@ -270,7 +270,11 @@ class Decoder(nn.Module):
         output_dims = config.out_dim
         scale = width ** -0.5
         self.class_embedding = nn.Parameter(scale * torch.randn(width))
-        self.positional_embedding = nn.Parameter(scale * torch.randn(num_frames, 1, heads, width // heads))
+        if "temporal_position" in config.op_mode and config.op_mode.temporal_position:
+            self.positional_embedding = nn.Parameter(scale * torch.randn(num_frames, 1, heads, width // heads))
+        else:
+            self.positional_embedding = None
+
         self.ln_pre = LayerNorm(width)
         self.drop_pre = torch.nn.Dropout(config.dropout)
         self.transformer = Transformer(
@@ -292,12 +296,16 @@ class Decoder(nn.Module):
     def forward(self, kvs, m):
         m = m.repeat_interleave(kvs[0]['k'].size(2), dim=-1)
 
-        kvs = [
-            {
-                k: (v + self.positional_embedding).flatten(1, 2) for k, v in kv.items()
-            }
-            for kv in kvs
-        ]
+        # add temporal positional embedding
+        if (not self.positional_embedding == None):
+            for i in range(len(kvs)):
+                for k in kvs[i].keys():
+                    kvs[i][k] = kvs[i][k] + self.positional_embedding
+
+        # flatten
+        for i in range(len(kvs)):
+            for k in kvs[i].keys():
+                kvs[i][k] = kvs[i][k].flatten(1, 2)
 
         x = self.class_embedding.view(1, 1, -1).repeat(kvs[0]['k'].size(0), 1, 1)
         x = self.drop_pre(self.ln_pre(x))
@@ -368,6 +376,9 @@ class Detector(nn.Module):
         C.adapter.type = "none"
         # training mode configurations
         C.train_mode = CN(new_allowed=True)
+        # operation mode configurations
+        C.op_mode = CN(new_allowed=True)
+        C.op_mode.temporal_position = 1
         # regularization
         C.dropout = 0.0
         C.weight_decay = 0.01
@@ -391,6 +402,7 @@ class Detector(nn.Module):
         self.weight_decay = config.weight_decay
         self.optimizer = config.optimizer
         self.train_mode = config.train_mode
+        self.op_mode = config.op_mode
         self.losses = []
 
         for loss in config.losses:
@@ -512,6 +524,14 @@ class Detector(nn.Module):
     def forward(self, x, y, m, comp=None, speed=None, train=False, single_task=None, *args, **kargs):
         device = x.device
         b, t, c, h, w = x.shape
+
+        if ("ema_frame" in self.op_mode):
+            ema_ratio = self.op_mode.ema_frame
+            _x = torch.zeros((b, 1, c, h, w), device=x.device)
+            for i in range(t):
+                _x = _x * ema_ratio + x[:, i].unsqueeze(1) * (1 - ema_ratio)
+            x = _x
+            m = m[:, 0].unsqueeze(1)
 
         task_logits, features = self.predict(
             x,

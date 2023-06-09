@@ -5,8 +5,10 @@ import torch
 from torch.utils.data.dataloader import Dataset, DataLoader
 from yacs.config import CfgNode as CN
 
+
 class _Evaluator:
     pass
+
 
 class Evaluator(_Evaluator):
     @staticmethod
@@ -34,7 +36,6 @@ class Evaluator(_Evaluator):
                     collate_fn=dataset.collate_fn
                 )
             )
-        
 
     def add_callback(self, onevent: str, callback, **kwargs):
         self.callbacks[onevent].append(callback)
@@ -54,28 +55,25 @@ class Evaluator(_Evaluator):
         self.batch_num = 0
         self.total_tasks = trainer.total_tasks
 
-        dataset_iterators = {
-            name:
-            iter(dataloader) for name, dataloader in self.dataloaders.items()
-        }
-    
-        while len(dataset_iterators) > 0:
-            self.trigger_callbacks('on_batch_start')
-            self.batch_losses = {}
-            self.batch_logits = {}
-            self.batch_labels = {}
-            for name in list(dataset_iterators.keys()):
-                try:
-                    batch = next(dataset_iterators[name])
-                except StopIteration:
-                    dataset_iterators.pop(name)
-                    continue
+        # dataset_iterators = {
+        #     name:
+        #     iter(dataloader) for name, dataloader in self.dataloaders.items()
+        # }
+
+        # while len(dataset_iterators) > 0:
+        for name in self.dataloaders:
+            for batch in self.dataloaders[name]:
+                self.trigger_callbacks('on_batch_start')
+                self.batch_losses = {}
+                self.batch_logits = {}
+                self.batch_labels = {}
+
                 # cache the index of source task.
                 task_index = batch[-1][0]
                 # create labels
-                task_labels = [ 
-                        batch[1] if i == task_index else None
-                        for i in range(self.total_tasks)
+                task_labels = [
+                    batch[1] if i == task_index else None
+                    for i in range(self.total_tasks)
                 ]
                 batch[1] = task_labels
                 # forward
@@ -87,9 +85,15 @@ class Evaluator(_Evaluator):
                 self.batch_losses[name] = task_losses[task_index].detach()
                 self.batch_logits[name] = task_logits[task_index].detach()
                 self.batch_labels[name] = batch[1][task_index].detach()
-            self.batch_num += 1
-            self.batch_loss_info = ",".join([f"{losses.mean().item()}({name}) " for name,losses in self.batch_losses.items()])
-            self.trigger_callbacks('on_batch_end')
+
+                self.batch_num += 1
+                self.batch_loss_info = ",".join(
+                    [
+                        f"{losses.mean().item()}({name}) "
+                        for name, losses in self.batch_losses.items()
+                    ]
+                )
+                self.trigger_callbacks('on_batch_end')
         self.trigger_callbacks('on_evaluation_end')
 
 
@@ -119,7 +123,6 @@ class CompInvEvaluator(_Evaluator):
                     collate_fn=dataset.collate_fn
                 )
             )
-        
 
     def add_callback(self, onevent: str, callback, **kwargs):
         self.callbacks[onevent].append(callback)
@@ -142,7 +145,7 @@ class CompInvEvaluator(_Evaluator):
             name:
             iter(dataloader) for name, dataloader in self.dataloaders.items()
         }
-    
+
         while len(dataset_iterators) > 0:
             self.trigger_callbacks('on_batch_start')
             self.batch_losses = {}
@@ -155,16 +158,15 @@ class CompInvEvaluator(_Evaluator):
                     dataset_iterators.pop(name)
                     continue
                 # forward
-                recon_loss, match_loss = self.model(batch[0],batch[3])
+                recon_loss, match_loss = self.model(batch[0], batch[3])
 
                 # cache several stats
                 self.batch_losses["recon"] = recon_loss.detach()
                 self.batch_losses["match"] = match_loss.detach()
 
             self.batch_num += 1
-            self.batch_loss_info = ",".join([f"{losses.mean().item()}({name}) " for name,losses in self.batch_losses.items()])
+            self.batch_loss_info = ",".join(
+                [f"{losses.mean().item()}({name}) " for name, losses in self.batch_losses.items()])
             self.trigger_callbacks('on_batch_end')
 
         self.trigger_callbacks('on_evaluation_end')
-
-
