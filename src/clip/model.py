@@ -196,7 +196,7 @@ class MultiheadAttention(nn.Module):
 
         out = self.out_proj(mix.flatten(-2))
 
-        return dict(k=k, v=v, out=out)
+        return dict(q=q, k=k, v=v, out=out)
 
 
 class ResidualAttentionBlock(nn.Module):
@@ -233,7 +233,7 @@ class Transformer(nn.Module):
         self.layers = layers
         self.resblocks = nn.Sequential(*[ResidualAttentionBlock(width, heads, attn_mask) for _ in range(layers)])
 
-    def forward(self, x: torch.Tensor, with_out=False):
+    def forward(self, x: torch.Tensor, with_out=False, with_q=False):
         # key and value from each layer
         kvs = []
         for blk in self.resblocks:
@@ -242,6 +242,10 @@ class Transformer(nn.Module):
                 x = a['out']
             else:
                 x = a.pop('out')
+
+            if (not with_q):
+                a.pop('q')
+
             kvs.append(a)
 
         return kvs
@@ -269,7 +273,7 @@ class VisionTransformer(nn.Module):
         self.ln_post = LayerNorm(width)
         self.proj = nn.Parameter(scale * torch.randn(width, output_dim))
 
-    def forward(self, x: torch.Tensor, with_out=False):
+    def forward(self, x: torch.Tensor, with_out=False, with_q=False):
         x = self.conv1(x)  # shape = [*, width, grid, grid]
         x = x.reshape(x.shape[0], x.shape[1], -1)  # shape = [*, width, grid ** 2]
         x = x.permute(0, 2, 1)  # shape = [*, grid ** 2, width]
@@ -282,11 +286,12 @@ class VisionTransformer(nn.Module):
                     dtype=x.dtype, device=x.device
                 ),
                 x
-            ], dim=1)  # shape = [*, grid ** 2 + 1, width]
+            ], dim=1
+        )  # shape = [*, grid ** 2 + 1, width]
         x = x + self.positional_embedding.to(x.dtype)
         x = self.ln_pre(x)
 
-        return self.transformer(x, with_out)
+        return self.transformer(x, with_out, with_q)
 
 
 class CLIP(nn.Module):

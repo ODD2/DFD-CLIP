@@ -15,6 +15,9 @@ data:
     types:
     - REAL
     - NT
+    - FS
+    - F2F
+    - DF
   - category: Deepfake
     name: DFDC
     pack: 0
@@ -43,6 +46,7 @@ data:
     - DF
     - FS
     - F2F
+    - NT
 evaluator:
   batch_size: 18
   metrics:
@@ -63,11 +67,11 @@ evaluator:
 model:
   foundation: dinov2
   adapter:
-    # frozen: 0
-    # struct:
-    #   type: 768-x-768-z0
-    #   x: 256
-    type: none
+    frozen: 0
+    struct:
+      type: 768-x-768-ln
+      x: 256
+    type: normal
   architecture: ViT-B/16
   decode_indices:
   - 6
@@ -86,8 +90,8 @@ model:
   - 2
   train_mode: 
     patch_mask:
-      type:  sample
-      ratio: 0.2
+      type: batch
+      ratio: 0.75
   weight_decay: 0.01
   optimizer: sgd
 system:
@@ -106,9 +110,8 @@ tracking:
   tool: wandb
 trainer:
   batch_size: 11
-  ema_ratio: 0.999
-  learning_rate: 0.003
-  max_steps: 6000
+  learning_rate: 0.005
+  max_steps: 3000
   metrics:
   - name: deepfake/ffpp
     types:
@@ -117,4 +120,3 @@ trainer:
   mode: normal
   name: Trainer
   num_workers: 8
-  teach_at: 50

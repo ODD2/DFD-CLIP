@@ -464,13 +464,15 @@ class Detector(nn.Module):
                     if type(patch_indices) == type(None):
                         patch_indices = np.random.choice(
                             range(num_patch),
-                            num_select
+                            num_select,
+                            replace=False
                         )
                 elif self.train_mode.patch_mask.type == "sample":
                     # discard patch localized out of the randomly selected indices.
                     patch_indices = np.random.choice(
                         range(num_patch),
-                        num_select
+                        num_select,
+                        replace=False
                     )
                 elif self.train_mode.patch_mask.type == "guide":
                     patch_indices = np.random.choice(
@@ -762,6 +764,22 @@ class CompInvAdapter(nn.Module):
                         torch.nn.Sequential(
                             torch.nn.Linear(width, inner_dim, bias=False),
                             torch.nn.LayerNorm((patches, inner_dim)),
+                            torch.nn.GELU(),
+                            torch.nn.Dropout(config.dropout / 10),
+
+                            torch.nn.Linear(inner_dim, width, bias=False),
+                            torch.nn.Dropout(config.dropout)
+                        )
+                    )
+                elif (config.adapter.struct.type == "768-x-768-ln"):
+                    inner_dim = int(config.adapter.struct.x)
+
+                    setattr(
+                        self,
+                        _name,
+                        torch.nn.Sequential(
+                            torch.nn.Linear(width, inner_dim, bias=False),
+                            torch.nn.LayerNorm(inner_dim),
                             torch.nn.GELU(),
                             torch.nn.Dropout(config.dropout / 10),
 
