@@ -10,7 +10,7 @@ data:
     name: FFPP
     pack: 0
     pair: 0
-    root_dir: ./datasets/ffpp_250/
+    root_dir: ./datasets/ffpp/
     scale: 1.0
     types:
     - REAL
@@ -18,12 +18,12 @@ data:
   - category: Deepfake
     name: DFDC
     pack: 0
-    root_dir: ./datasets/dfdc_250/
+    root_dir: ./datasets/dfdc/
     scale: 0.1
   - category: Deepfake
     name: CDF
     pack: 0
-    root_dir: ./datasets/cdf_250/
+    root_dir: ./datasets/cdf/
     scale: 0.6
   num_frames: 20
   train:
@@ -36,7 +36,7 @@ data:
     name: FFPP
     pack: 0
     pair: 0
-    root_dir: ./datasets/ffpp_250/
+    root_dir: ./datasets/ffpp/
     scale: 1.0
     types:
     - REAL
@@ -84,6 +84,8 @@ model:
   out_dim:
   - 2
   train_mode: {}
+  op_mode:
+    global_prediction: 1
   weight_decay: 0.01
 system:
   deterministic_training: true
@@ -101,7 +103,6 @@ tracking:
   tool: wandb
 trainer:
   batch_size: 12
-  ema_ratio: 0.999
   learning_rate: 0.003
   max_steps: 3000
   metrics:
@@ -111,5 +112,4 @@ trainer:
     - roc_auc
   mode: normal
   name: Trainer
-  num_workers: 10
-  teach_at: 50
+  num_workers: 8

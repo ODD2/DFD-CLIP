@@ -26,6 +26,8 @@ from glob import glob
 from scipy.signal import resample
 from pyedflib import highlevel as BDFReader
 import albumentations as alb
+import torchvision
+torchvision.set_video_backend("video_reader")
 
 
 class SessionMeta:
@@ -544,23 +546,31 @@ class FFPP(Dataset):
                 assert len(self.real_clip_idx) > 0, "Real Clip Index Cache Empty!!!"
                 while (True):
                     try:
-                        while (True):
-                            _, df_type, _, vid_idx, _ = self.__video_info(idx)
-                            if (df_type == "REAL"):
-                                idx = random.randint(0, len(self))
-                                continue
-                            else:
-                                break
-                        main_label = (not df_type == "REAL")
+                        # random select a fake clip
+                        vid_idx, df_type, _, vid_name, _ = self.video_info(idx)
+                        if (df_type == "REAL"):
+                            idx = random.randint(0, len(self))
+                            continue
+                        clip_offset = idx - (0 if vid_idx == 0 else self.stack_video_clips[vid_idx - 1])
                         main_idx = idx
-                        auxi_idx = random.randint(*self.real_clip_idx[vid_idx.split('_')[-1]])
-                        result.append(self.get_dict(main_idx, block=True))
-                        result.append(self.get_dict(auxi_idx, block=True))
+                        main_label = (not df_type == "REAL")
+                        # 1. random select a clip of the corresponding real video
+                        # auxi_idx = random.randint(*self.real_clip_idx[vid_idx.split('_')[-1]])
+                        # 2. select the the real clip corresponding to the fake clip
+                        auxi_idx = self.real_clip_idx[vid_name.split('_')[-1]][0] + clip_offset
+                        # fetch result
+                        result = [
+                            self.get_dict(auxi_idx, block=True),
+                            self.get_dict(main_idx, block=True)
+                        ]
                     except Exception as e:
                         logging.debug("Cannot Form Constrastive Pair, Retry...")
+                        raise e
                         continue
+                    else:
+                        break
             else:
-                _, df_type, _, _, _ = self.__video_info(idx)
+                _, df_type, _, _, _ = self.video_info(idx)
                 main_label = (not df_type == "REAL")
                 main_idx = idx
                 auxi_idx = random.randint(0, len(self))
@@ -583,7 +593,7 @@ class FFPP(Dataset):
             try:
                 # video_idx =  next(i for i,x in enumerate(self.stack_video_clips) if  idx < x)
                 # df_type, comp, video_name, clips = self.video_list[video_idx]
-                video_idx, df_type, comp, video_name, clips = self.__video_info(idx)
+                video_idx, df_type, comp, video_name, clips = self.video_info(idx)
 
                 # while specified the target label, resample a video index to match.
                 if (not target_label == None):
@@ -691,7 +701,7 @@ class FFPP(Dataset):
                 else:
                     idx = random.randrange(0, len(self))
 
-    def __video_info(self, idx):
+    def video_info(self, idx):
         video_idx = next(i for i, x in enumerate(self.stack_video_clips) if idx < x)
         return video_idx, *self.video_list[video_idx]
 

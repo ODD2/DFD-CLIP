@@ -97,7 +97,7 @@ def get_config(params):
         ]
 
     if params.test:
-        C.tracking.enabled = True
+        # C.tracking.enabled = True
         C.tracking.directory = 'logs'
         C.tracking.project_name = "test"
 
@@ -286,10 +286,6 @@ def init_accelerator(config):
         kwargs_handlers=accelerate_kwargs_handlers
     )
 
-    # init huggingface accelerator
-    if not config.tracking.enabled:
-        return accelerator
-
     # init tracker parameters
     project_name = config.tracking.default_project_prefix
     tracking_root = os.path.join(os.path.dirname(__file__), config.tracking.directory)
@@ -312,11 +308,12 @@ def init_accelerator(config):
             f.write(config.dump())
 
     # init tracker.
-    wandb.init(project=project_name)
+    wandb.init(project=project_name, mode="online" if config.tracking.enabled else "offline")
     # save config.
     wandb.save(glob_str=os.path.join(PROJECT_DIR, 'setting.yaml'), policy="now")
     # save run name in description.
     wandb.run.notes = wandb.run.name
+
     return accelerator
 
 

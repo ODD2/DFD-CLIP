@@ -84,6 +84,9 @@ model:
   out_dim:
   - 2
   train_mode: {}
+  op_mode:
+    ema_frame: 0.3
+    temporal_position: 0
   weight_decay: 0.01
 system:
   deterministic_training: true
@@ -95,12 +98,12 @@ tracking:
   compare_fn: max
   default_project_prefix: version
   directory: logs/deepfake
-  enabled: true
+  enabled: false
   main_metric: deepfake/ffpp/roc_auc
   project_name: deepfake
   tool: wandb
 trainer:
-  batch_size: 12
+  batch_size: 64
   learning_rate: 0.003
   max_steps: 3000
   metrics:

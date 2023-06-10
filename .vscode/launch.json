@@ -12,8 +12,9 @@
             "args": [
                 "--cfg",
                 // "configs/comp-inv-encoder/deepfake.yaml",
-                "configs/deepfake/dino/sgd(0.9m)-pure-pm-all-ln.yaml",
-                // "configs/deepfake/sgd(0.9m)-pure.yaml",
+                // "configs/deepfake/dino/sgd(0.9m)-pure-pm-all-ln.yaml",
+                "configs/deepfake/sgd(0.9m)-pure.yaml",
+                // "configs/deepfake/sgd(0.9m)-pure-ema.yaml",
                 // "configs/deepfake/sgd(0.9m)-pure-fp16.yaml",
                 // "configs/deepfake/sgd(0.9m)-z0-pm-aq.yaml",
                 // "configs/deepfake/deepfake.yaml",

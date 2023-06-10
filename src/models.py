@@ -245,14 +245,16 @@ class Transformer(nn.Module):
         self.resblocks = nn.Sequential(*self.resblocks)
 
     def forward(self, x: torch.Tensor, kvs, m):
+        result = []
         for i, blk, kv in zip(range(len(self.resblocks)), self.resblocks, kvs):
             x = blk(x, kv['k'], kv['v'], m)
+            result.append(x)
 
             if len(self.augment_query_embeddings) > 0:
                 if not (i == len(self.resblocks) - 1):
                     x = x + self.augment_query_embeddings[i]
 
-        return x
+        return torch.cat(result, dim=1)
 
 
 class Decoder(nn.Module):
@@ -268,6 +270,7 @@ class Decoder(nn.Module):
         width = detector.encoder.width
         heads = detector.encoder.heads
         output_dims = config.out_dim
+        self.op_mode = config.op_mode
         scale = width ** -0.5
         self.class_embedding = nn.Parameter(scale * torch.randn(width))
         if "temporal_position" in config.op_mode and config.op_mode.temporal_position:
@@ -286,12 +289,23 @@ class Decoder(nn.Module):
         )
         self.ln_post = LayerNorm(width)
         self.drop_post = torch.nn.Dropout(config.dropout)
-        self.projections = []
+        self.task_projections = []
 
         for i, output_dim in enumerate(output_dims):
-            _name = f"proj{i}x{output_dim}"
-            setattr(self, _name, nn.Parameter(scale * torch.randn(width, output_dim)))
-            self.projections.append(getattr(self, _name))
+            layer_matrices = []
+
+            if "global_prediction" in self.op_mode and self.op_mode.global_prediction:
+                for l in detector.layer_indices:
+                    _name = f"proj{i}x{output_dim}_L{l}"
+                    setattr(self, _name, nn.Parameter(scale * torch.randn(width, output_dim)))
+                    layer_matrices.append(getattr(self, _name))
+
+            else:
+                _name = f"proj{i}x{output_dim}"
+                setattr(self, _name, nn.Parameter(scale * torch.randn(width, output_dim)))
+                layer_matrices.append(getattr(self, _name))
+
+            self.task_projections.append(layer_matrices)
 
     def forward(self, kvs, m):
         m = m.repeat_interleave(kvs[0]['k'].size(2), dim=-1)
@@ -310,9 +324,24 @@ class Decoder(nn.Module):
         x = self.class_embedding.view(1, 1, -1).repeat(kvs[0]['k'].size(0), 1, 1)
         x = self.drop_pre(self.ln_pre(x))
         x = self.transformer(x, kvs, m)
+        # drop the layer features if not required
+        if (len(self.task_projections[0]) == 1):
+            x = x[:, -1]
         x = self.drop_post(self.ln_post(x))
         video_feature = x.squeeze(1)
-        task_logits = [video_feature @ projection for projection in self.projections]
+
+        if "global_prediction" in self.op_mode and self.op_mode.global_prediction:
+            task_logits = [
+                sum(
+                    [
+                        video_feature[:, i] @ layer_matrices[i]
+                        for i in range(len(layer_matrices))
+                    ]
+                )
+                for layer_matrices in self.task_projections
+            ]
+        else:
+            task_logits = [video_feature @ layer_matrices[-1] for layer_matrices in self.task_projections]
 
         return task_logits, video_feature
 
@@ -525,7 +554,7 @@ class Detector(nn.Module):
         device = x.device
         b, t, c, h, w = x.shape
 
-        if ("ema_frame" in self.op_mode):
+        if ("ema_frame" in self.op_mode and self.op_mode.ema_frame):
             ema_ratio = self.op_mode.ema_frame
             _x = torch.zeros((b, 1, c, h, w), device=x.device)
             for i in range(t):
