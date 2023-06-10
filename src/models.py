@@ -236,7 +236,7 @@ class Transformer(nn.Module):
             )
 
         self.augment_query_embeddings = []
-        if "aug_query" in config and config.aug_query:
+        if "aug_query" in config.op_mode and config.op_mode.aug_query:
             for i in range(len(layer_indices) - 1):
                 name = f"augment_query_{i}"
                 setattr(self, name, nn.Parameter(torch.zeros(width)))
