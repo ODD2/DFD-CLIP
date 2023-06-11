@@ -309,8 +309,7 @@ class Decoder(nn.Module):
 
     def forward(self, kvs, m):
         m = m.repeat_interleave(kvs[0]['k'].size(2), dim=-1)
-
-        # add temporal positional embedding
+        # add temporasitional embedding
         if (not self.positional_embedding == None):
             for i in range(len(kvs)):
                 for k in kvs[i].keys():
@@ -334,7 +333,10 @@ class Decoder(nn.Module):
             task_logits = [
                 sum(
                     [
-                        video_feature[:, i] @ layer_matrices[i]
+                        (
+                            (video_feature[:, i] @ layer_matrices[i]) * (i + 1) /
+                            ((1 + len(layer_matrices)) * len(layer_matrices) / 2)
+                        )
                         for i in range(len(layer_matrices))
                     ]
                 )

@@ -62,17 +62,22 @@ evaluator:
   num_workers: 8
 model:
   adapter:
-    frozen: 0
-    struct:
-      type: 768-x-768-nln
-      x: 256
-    type: normal
+    # frozen: 0
+    # struct:
+    #   type: 768-x-768-nln
+    #   x: 256
+    # type: normal
+    type: none
   architecture: ViT-B/16
   decode_indices:
+  - 0
+  - 2
+  - 4
+  # - 5
   - 6
-  - 7
+  # - 7
   - 8
-  - 9
+  # - 9
   - 10
   - 11
   decode_mode: index
@@ -112,4 +117,4 @@ trainer:
     - roc_auc
   mode: normal
   name: Trainer
-  num_workers: 8
+  num_workers: 10
