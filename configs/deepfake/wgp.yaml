@@ -1,50 +1,64 @@
 data:
-  clip_duration: 2
+  clip_duration: 4
   eval:
   - augmentation: none
     category: Deepfake
     compressions:
     - c23
     contrast: 0
+    contrast_pair: 0
     detection_level: video
     name: FFPP
     pack: 0
     pair: 0
+    random_speed: 1
     root_dir: ./datasets/ffpp/
     scale: 1.0
+    ssl_fake: 0
     types:
     - REAL
+    - DF
+    - FS
+    - F2F
     - NT
-  # - category: Deepfake
-  #   name: DFDC
-  #   pack: 0
-  #   root_dir: ./datasets/dfdc/
-  #   scale: 0.1
+    vid_ext: .avi
+  - category: Deepfake
+    name: DFDC
+    pack: 0
+    root_dir: ./datasets/dfdc/
+    scale: 0.1
+    vid_ext: .avi
   - category: Deepfake
     name: CDF
     pack: 0
     root_dir: ./datasets/cdf/
     scale: 1.0
-  num_frames: 2
+    vid_ext: .avi
+  num_frames: 20
   train:
   - augmentation: normal+frame
     category: Deepfake
     compressions:
     - c23
     contrast: 1
+    contrast_pair: 0
     detection_level: video
     name: FFPP
     pack: 0
     pair: 0
+    random_speed: 1
     root_dir: ./datasets/ffpp/
     scale: 1.0
+    ssl_fake: 0
     types:
     - REAL
     - DF
     - FS
     - F2F
+    - NT
+    vid_ext: .avi
 evaluator:
-  batch_size: 256
+  batch_size: 24
   metrics:
   - name: deepfake/ffpp
     types:
@@ -54,26 +68,18 @@ evaluator:
     types:
     - accuracy
     - roc_auc
-  # - name: deepfake/dfdc
-  #   types:
-  #   - accuracy
-  #   - roc_auc
+  - name: deepfake/dfdc
+    types:
+    - accuracy
+    - roc_auc
   name: Evaluator
   num_workers: 8
 model:
   adapter:
-    frozen: 0
-    struct:
-      type: 768-x-768-nln
-      x: 256
-    type: normal
-    # type: none
+    type: none
   architecture: ViT-B/16
+  concat_ref: 0
   decode_indices:
-  # - 0
-  # - 2
-  # - 4
-  # - 5
   - 6
   - 7
   - 8
@@ -83,14 +89,19 @@ model:
   decode_mode: index
   decode_stride: 2
   dropout: 0.5
+  foundation: clip
   losses:
-  - auc_roc
+  - name: auc_roc
+    args:
+      label_smoothing: 0.1
   name: Detector
+  op_mode:
+    global_prediction: 1
+    temporal_position: 1
+  optimizer: sgd
   out_dim:
   - 2
   train_mode: {}
-  # op_mode:
-    # global_prediction: 1
   weight_decay: 0.01
 system:
   deterministic_training: true
@@ -101,14 +112,15 @@ system:
 tracking:
   compare_fn: max
   default_project_prefix: version
-  directory: logs/deepfake
+  directory: logs
   enabled: true
   main_metric: deepfake/ffpp/roc_auc
-  project_name: deepfake
+  project_name: test
   tool: wandb
 trainer:
-  batch_size: 128
+  batch_size: 12
   learning_rate: 0.003
+  lr_scheduler: one_cycle
   max_steps: 3000
   metrics:
   - name: deepfake/ffpp
@@ -116,5 +128,6 @@ trainer:
     - accuracy
     - roc_auc
   mode: normal
+  mode_params: {}
   name: Trainer
   num_workers: 10
