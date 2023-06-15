@@ -99,7 +99,10 @@ class MultiheadAttention(nn.Module):
             """
             aff = torch.einsum('nqhc,nkhc->nqkh', q / (q.size(-1) ** 0.5), k)
             aff = aff.masked_fill(~m, float('-inf'))
+            n, q, k, h = aff.shape
+            aff = aff.view((n, q, -1, 196, h))
             aff = aff.softmax(dim=-2)
+            aff = aff.view((n, q, k, h))
             return aff
 
         def coda(q, k, m):
