@@ -1,11 +1,15 @@
-import argparse
 import os
+from os.path import exists
+import argparse
+
 
 import cv2
 from pathlib import Path
 import numpy as np
 from tqdm import tqdm
-
+import torchvision
+from torchvision.io import VideoReader
+torchvision.set_video_backend("video_reader")
 
 SAMPLE_RATE = 16_000
 
@@ -22,12 +26,13 @@ def load_args():
     parser.add_argument('--stride', default=1, type=int)
     parser.add_argument('--lm-mode', default="pack", type=str, help='landmark extraction mode.')
     parser.add_argument('--video-ext', default="mp4", type=str, help='video file extension')
-    parser.add_argument('--video-folder', default="video", type=str, help='video folder')
-    parser.add_argument('--lm-folder', default="landmark", type=str, help='landmark folder')
+    parser.add_argument('--video-folder', default="videos", type=str, help='video folder')
+    parser.add_argument('--lm-folder', default="landmarks", type=str, help='landmark folder')
     parser.add_argument('--glob-exp', default="", type=str, help='additional glob expressions.')
     parser.add_argument('--save-folder', default="cropped_faces", type=str,
                         help="folder destination to save the process results.")
-    parser.add_argument('--replace', action="store_true",default=False)
+
+    parser.add_argument('--replace', action="store_true", default=False)
 
     args = parser.parse_args()
     return args
@@ -68,7 +73,7 @@ def affine_transform(frame, landmarks, reference, grayscale=False, target_size=(
     return transformed_frame, transformed_landmarks
 
 
-def cut_patch(img, landmarks, height, width, threshold=5):
+def cut_patch(img, landmarks, height, width, args, threshold=5):
     center_x, center_y = np.mean(landmarks, axis=0)
 
     if center_y - height < 0:
@@ -89,13 +94,17 @@ def cut_patch(img, landmarks, height, width, threshold=5):
     if center_x + width > img.shape[1] + threshold:
         raise Exception('too much bias in width')
 
-    cutted_img = np.copy(img[int(round(center_y) - round(height)): int(round(center_y) + round(height)),
-                         int(round(center_x) - round(width)): int(round(center_x) + round(width))])
-    return cutted_img
+    uy, by = int(round(center_y) - round(height)), int(round(center_y) + round(height))
+    lx, rx = int(round(center_x) - round(width)), int(round(center_x) + round(width))
+    cutted_img = np.copy(img[uy:by, lx:rx])
+    # [2:] remove redundant landmarks from the affine transform procedurea
+    cutted_landmarks = np.copy(landmarks) - [lx, uy]
+    return cutted_img, cutted_landmarks
 
 
 def crop_patch(frames, landmarks, reference, args):
-    sequence = []
+    crop_frames = []
+    crop_landmarks = []
     length = min(len(landmarks), len(frames))
     for frame_idx in range(length):
         frame = frames[frame_idx]
@@ -107,15 +116,16 @@ def crop_patch(frames, landmarks, reference, args):
         transformed_frame, transformed_landmarks = affine_transform(
             frame, smoothed_landmarks, reference, grayscale=False
         )
-        sequence.append(
-            cut_patch(
-                transformed_frame,
-                transformed_landmarks[args.start_idx:args.stop_idx],
-                args.crop_height // 2,
-                args.crop_width // 2,
-            )
+        crop_frame, crop_landmark = cut_patch(
+            transformed_frame,
+            transformed_landmarks[args.start_idx:args.stop_idx],
+            args.crop_height // 2,
+            args.crop_width // 2,
+            args=args
         )
-    return np.array(sequence)
+        crop_frames.append(crop_frame)
+        crop_landmarks.append(crop_landmark)
+    return np.array(crop_frames), np.array(crop_landmarks)
 
 
 def get_video_clip(video_filename, stride=1):
@@ -136,6 +146,22 @@ def get_video_clip(video_filename, stride=1):
     return fps, frames
 
 
+# def get_video_clip(video_filename, stride=1):
+#     vid_reader = VideoReader(
+#         video_filename,
+#         "video", num_threads=1
+#     )
+
+#     fps = round(vid_reader.get_metadata()["video"]["fps"][0])
+#     frames = []
+#     for i, frame in enumerate(vid_reader):
+#         if not i % stride == 0:
+#             continue
+#         frames.append(cv2.cvtColor(frame["data"].permute((1, 2, 0)).numpy(), cv2.COLOR_BGR2RGB))
+#     del vid_reader
+#     return fps, frames
+
+
 def get_video_landmark(video_path, video_relpath, landmarks_root, mode="pack", stride=1):
     assert mode in ["pack", "frame"]
     landmarks = []
@@ -150,11 +176,11 @@ def get_video_landmark(video_path, video_relpath, landmarks_root, mode="pack", s
         landmarks = [lm for i, lm in enumerate(landmarks_pack) if i % stride == 0]
     elif mode == "frame":
         for cnt_frame in range(frame_count_org):
-            if(not cnt_frame % stride == 0):
+            if (not cnt_frame % stride == 0):
                 continue
             lm_path = os.path.join(landmarks_base_path, str(cnt_frame).zfill(3) + ".npy")
             landmarks.append(np.load(lm_path))
-    if(len(landmarks[0]) == 98):
+    if (len(landmarks[0]) == 98):
         _98_to_68_mapping = [
             0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24,
             26, 28, 30, 32, 33, 34, 35, 36, 37, 42, 43, 44,
@@ -175,7 +201,7 @@ def main():
 
     video_root = os.path.join(args.root_dir, args.video_folder)
     lm_root = os.path.join(args.root_dir, args.lm_folder)
-    target_root = os.path.join(args.root_dir, args.save_folder)
+    target_folder = os.path.join(args.root_dir, args.save_folder)
 
     for path in tqdm(list(Path(video_root).rglob(f"{args.glob_exp}.{args.video_ext}"))):
         try:
@@ -183,30 +209,29 @@ def main():
 
             video_path = os.path.join(video_root, relpath)
 
-            target_dir = os.path.join(target_root, relpath[:-4])
+            target_video_path_wo_ext = os.path.join(target_folder, relpath[:-4])
+            target_landmark_path_wo_ext = target_video_path_wo_ext.replace(
+                args.save_folder, args.save_folder + "(landmark)"
+            )
 
-            if(os.path.exists(f"{target_dir}.avi") and not args.replace):
+            if (exists(f"{target_video_path_wo_ext}.avi") and exists(f"{target_landmark_path_wo_ext}.npy") and not args.replace):
                 continue
 
             landmarks = get_video_landmark(video_path, relpath, lm_root, mode=args.lm_mode, stride=args.stride)
 
             fps, frames = get_video_clip(video_path, stride=args.stride)
 
-            sequence = crop_patch(frames, landmarks, reference, args)
+            crop_frames, crop_landmarks = crop_patch(frames, landmarks, reference, args)
 
-            os.makedirs(os.path.dirname(target_dir), exist_ok=True)
+            # save video
+            os.makedirs(os.path.dirname(target_video_path_wo_ext), exist_ok=True)
 
-            audio_path = None
+            save_video_lossless(target_video_path_wo_ext, crop_frames, fps, None)
 
-            if args.root_dir.endswith("LRW/"):  # extract audio
-                audio_path = video_path[:-4] + ".wav"
-                cmd = f"ffmpeg -i {video_path} {audio_path}"
-                os.system(cmd)
+            # save landmark
+            os.makedirs(os.path.dirname(target_landmark_path_wo_ext), exist_ok=True)
 
-            save_video_lossless(target_dir, sequence, fps, audio_path)
-
-            if args.root_dir.endswith("LRW/"):
-                os.remove(audio_path)
+            np.save(target_landmark_path_wo_ext + ".npy", crop_landmarks)
 
         except Exception as e:
             print(f"Error Occur:{path} '{e}'")
