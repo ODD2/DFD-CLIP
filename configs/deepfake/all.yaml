@@ -71,6 +71,7 @@ model:
       type: 768-x-768-nln
       x: 256
     type: normal
+    # type: none
   architecture: ViT-B/16
   decode_indices:
   - 6

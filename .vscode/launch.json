@@ -18,7 +18,9 @@
                 // "configs/deepfake/sgd(0.9m)-pure-fp16.yaml",
                 // "configs/deepfake/sgd(0.9m)-z0-pm-aq.yaml",
                 // "configs/deepfake/deepfake.yaml",
-                "configs/deepfake/wgp.yaml",
+                // "configs/deepfake/wgp.yaml",
+                "configs/deepfake/test.yaml",
+                // "configs/deepfake/all.yaml",
                 // "configs/deepfake/2s(mode1):c23+resi+tune+dbal+5e-5.yaml",
                 // "/home/od/Desktop/repos/dfd-clip/configs/deepfake/2s(mode1):c23+resi+tune+dbal+5e-5+2s20f+reg_viral(hf,s,pfa).yaml",
                 // "configs/deepfake/2s(mode1):c23+resi+tune+dbal+5e-5+4s20f+reg_viral(hf,s,pfa)-e2e.yaml",
@@ -66,6 +68,28 @@
             "request": "launch",
             "module": "pipeline",
             "justMyCode": true
-        }
+        },
+        {
+            "name": "Python: Segmentation",
+            "type": "python",
+            "request": "launch",
+            "module": "preprocessing.segmentation",
+            "justMyCode": false,
+            "args": [
+                "--root-dir=/stock/FaceForensicC23"
+            ]
+        },
+        {
+            "name": "Python: Extract Faces",
+            "type": "python",
+            "request": "launch",
+            "module": "preprocessing.extract_faces",
+            "justMyCode": true,
+            "args": [
+                "--root-dir=/home/od/Desktop/Dataset/DFDC",
+                "--glob-exp=*",
+                "--save-folder=test"
+            ]
+        },
     ]
 }

@@ -92,18 +92,27 @@ class MultiheadAttention(nn.Module):
     we also apply compositional de-attention to the affinity matrix
     """
 
-    def __init__(self, embed_dim, n_head):
+    def __init__(self, config, num_frames, embed_dim, n_head):
+        self.num_frames = num_frames
+        self.attn_mode = [] if not "attn_mode" in config.op_mode else config.op_mode.attn_mode.split("+")
+
         def smax(q, k, m):
             """
             softmax in the original Transformer
             """
             aff = torch.einsum('nqhc,nkhc->nqkh', q / (q.size(-1) ** 0.5), k)
             aff = aff.masked_fill(~m, float('-inf'))
-            n, q, k, h = aff.shape
-            aff = aff.view((n, q, -1, 196, h))
-            aff = aff.softmax(dim=-2)
-            aff = aff.view((n, q, k, h))
-            return aff
+            if len(self.attn_mode) == 0:
+                return aff.softmax(dim=-2)
+            else:
+                n, q, k, h = aff.shape
+                affinities = []
+                aff = aff.view((n, q, self.num_frames, -1, h))
+                if "frame" in self.attn_mode:
+                    affinities.append(aff.softmax(dim=-2))
+                if "temporal" in self.attn_mode:
+                    affinities.append(aff.softmax(dim=-3))
+                return sum(affinities).view((n, q, k, h))
 
         def coda(q, k, m):
             """
@@ -143,10 +152,10 @@ class ResidualAttentionBlock(nn.Module):
     https://github.com/openai/CLIP/blob/d50d76daa670286dd6cacf3bcd80b5e4823fc8e1/clip/model.py#L171
     """
 
-    def __init__(self, d_model: int, n_head: int, config, block_index, layer_indices, reference_layers):
+    def __init__(self, d_model: int, n_head: int, config, num_frames, block_index, layer_indices, reference_layers):
         super().__init__()
 
-        self.attn = MultiheadAttention(d_model, n_head)
+        self.attn = MultiheadAttention(config, num_frames, d_model, n_head)
         self.ln_1 = LayerNorm(d_model)
         self.mlp = nn.Sequential(OrderedDict([
             ("c_fc", nn.Linear(d_model, d_model * 4)),
@@ -226,14 +235,14 @@ class Transformer(nn.Module):
     https://github.com/openai/CLIP/blob/d50d76daa670286dd6cacf3bcd80b5e4823fc8e1/clip/model.py#L195
     """
 
-    def __init__(self, width: int, heads: int, config, layer_indices, reference_layers):
+    def __init__(self, width: int, heads: int, config, num_frames, layer_indices, reference_layers):
         super().__init__()
         self.width = width
         self.resblocks = []
         for block_index in range(len(layer_indices)):
             self.resblocks.append(
                 ResidualAttentionBlock(
-                    width, heads, config,
+                    width, heads, config, num_frames,
                     block_index, layer_indices, reference_layers
                 )
             )
@@ -287,6 +296,7 @@ class Decoder(nn.Module):
             width,
             heads,
             config,
+            num_frames,
             layer_indices=detector.layer_indices,
             reference_layers=detector.encoder.transformer.resblocks
         )
@@ -776,6 +786,7 @@ class CompInvAdapter(nn.Module):
         width = detector.encoder.width
         patches = (detector.encoder.input_resolution // detector.encoder.patch_size)**2
         self.layer_blocks = []
+        self.residual = True
         for i in range(len(detector.layer_indices)):
             blk = {}
             for j in ["k", "v"]:
@@ -893,6 +904,23 @@ class CompInvAdapter(nn.Module):
                             torch.nn.Dropout(config.dropout)
                         )
                     )
+                elif (config.adapter.struct.type == "linear"):
+                    self.residual = False
+                    # create module
+                    module = torch.nn.Sequential(
+                        torch.nn.Linear(width, width, bias=False),
+                        torch.nn.Dropout(config.dropout)
+                    )
+
+                    # initialize with zero weight
+                    module[0].weight.data = torch.eye(width)
+
+                    # set attribute
+                    setattr(
+                        self,
+                        _name,
+                        module
+                    )
                 else:
                     raise NotImplemented()
 
@@ -902,13 +930,13 @@ class CompInvAdapter(nn.Module):
     def forward(self, kvs):
         b, t, p, h, d = kvs[0]['k'].shape
         # perform compression invariant transformation, per layer per key has it's transform matrix
-        kvs = [
-            {
-                k: v + (self.layer_blocks[i][k](v.view((b, t, p, -1)))).view((b, t, p, h, d)) for k, v in kv.items()
-            }
-            for i, kv in enumerate(kvs)
-        ]
-
+        for i in range(len(kvs)):
+            for k in kvs[i].keys():
+                features = (self.layer_blocks[i][k](kvs[i][k].view((b, t, p, -1)))).view((b, t, p, h, d))
+                if self.residual:
+                    kvs[i][k] = kvs[i][k] + features
+                else:
+                    kvs[i][k] = features
         return kvs
 
 

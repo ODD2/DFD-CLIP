@@ -85,6 +85,7 @@ model:
   - 2
   train_mode: {}
   # op_mode:
+    # attn_mode: "temporal+frame"
     # global_prediction: 1
   weight_decay: 0.01
 system:
