@@ -4,7 +4,7 @@ import torch
 from collections import defaultdict
 
 from torch.utils.data.dataloader import DataLoader
-from torch.optim.lr_scheduler import OneCycleLR
+from torch.optim.lr_scheduler import OneCycleLR,LinearLR
 from yacs.config import CfgNode as CN
 
 
@@ -48,18 +48,27 @@ class Trainer(_Trainer):
         self.callbacks = defaultdict(list)
 
         self.model = model
-        self.optimizer = model.configure_optimizers(config.learning_rate / 25)
-        # pre-cache number of tasks before distributed learning for further usage
-        self.total_tasks = len(model.out_dim)
-
         if config.lr_scheduler == "one_cycle":
+            self.optimizer = model.configure_optimizers(config.learning_rate / 25)
             self.lr_scheduler = OneCycleLR(
                 optimizer=self.optimizer,
                 max_lr=config.learning_rate,
                 total_steps=(config.max_steps * self.accelerator.state.num_processes)
             )
+        elif config.lr_scheduler == "linear":
+            self.optimizer = model.configure_optimizers(config.learning_rate)
+            self.lr_scheduler = LinearLR(
+                optimizer=self.optimizer,
+                start_factor=0.04,
+                total_iters=(config.max_steps/3)
+            )
         else:
             raise NotImplementedError()
+        
+        # pre-cache number of tasks before distributed learning for further usage
+        self.total_tasks = len(model.out_dim)
+
+       
 
         self.dataloaders = {}
         self.teaching = False
