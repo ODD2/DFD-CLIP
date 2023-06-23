@@ -50,14 +50,14 @@
             "request": "launch",
             "module": "inference",
             "args": [
-                "/home/od/Desktop/repos/dfd-clip/logs/test/classic-puddle-508",
+                "logs/deepfake/deepfake/c23+resi+dbal+3e-3+4s20f+reg_vien(hf,s,pfa-s)+last6+SGD(0.9m)",
                 "--modality",
                 "video",
                 "--batch_size",
                 "16",
                 "--cfg_name",
-                "setting"
-                // "--test",
+                "eval_ffpp",
+                "--test",
                 // "--aux_file",
                 // "/home/od/Desktop/repos/dfd-clip/configs/inference/all.yaml"
             ],

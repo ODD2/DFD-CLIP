@@ -255,7 +255,8 @@ def main(params):
 
     for dataset in eval_datasets:
         accelerator.print(
-            f'Evaluation Dataset {dataset.__class__.__name__.upper()} initialized with {len(dataset)} samples\n')
+            f'Evaluation Dataset {dataset.__class__.__name__.upper()} initialized with {len(dataset)} samples\n'
+        )
 
     # initialize trainer and evaluator
     trainer = globals()[config.trainer.name](config.trainer, accelerator, model, train_datasets)
@@ -348,9 +349,11 @@ if __name__ == "__main__":
 
     params = parser.parse_args()
 
+    logging_fmt = "[%(levelname)s][%(filename)s:%(lineno)d]: %(message)s"
+
     if (not params.debug):
         import warnings
-        logging.basicConfig(level="INFO")
+        logging.basicConfig(level="INFO",format=logging_fmt)
         warnings.filterwarnings(action="ignore")
         # disable warnings from the xformers efficient attention module due to torch.user_deterministic_algorithms(True,warn_only=True)
         warnings.filterwarnings(
@@ -360,6 +363,6 @@ if __name__ == "__main__":
         )
     else:
 
-        logging.basicConfig(level="DEBUG")
+        logging.basicConfig(level="DEBUG",format=logging_fmt)
 
     main(params)

@@ -276,8 +276,11 @@ class FFPP(Dataset):
         self.contrast = bool(config.contrast)
         self.ssl_fake = bool(config.ssl_fake)
         self.contrast_pair = bool(config.contrast_pair)
-        # available clips per data
+        # video info list
         self.video_list = []
+
+        # record missing videos in the csv file for further usage.
+        self.stray_videos = {}
 
         # stacking data clips
         self.stack_video_clips = []
@@ -494,7 +497,9 @@ class FFPP(Dataset):
                             comp_videos.append((df_type, comp, idx, clips))
                     else:
                         accelerator.print(
-                            f'Warning: video {path.join(self.root, self.TYPE_DIRS[df_type], comp, "videos", idx)} does not present in the processed dataset.')
+                            f'Warning: video {path.join(self.root, self.TYPE_DIRS[df_type], comp, "videos", idx)} does not present in the processed dataset.'
+                        )
+                        self.stray_videos[idx] = (0 if df_type == "REAL" else 1)
                 self.video_list += comp_videos[:int(self.scale * len(comp_videos))]
 
         # stacking up the amount of data clips for further usage
@@ -516,20 +521,20 @@ class FFPP(Dataset):
         if (self.pack):
             start = 0 if idx == 0 else self.stack_video_clips[idx - 1]
             end = self.stack_video_clips[idx]
+            label, _, _, _ = self.video_list[idx]
+            label = (0 if label == "REAL" else 1)
             frames = []
-            label = []
             mask = []
             speed = []
             for i in range(start, end):
                 try:
                     result = self.get_dict(i, block=True)
                 except:
-                    logging.warn(f"Cannot fetch clip for item index:{i}")
+                    logging.warn(f"cannot fetch clip index '{i}' in pack mode.")
                     continue
                 else:
                     for comp in result["frames"].keys():
                         frames.append(result["frames"][comp])
-                        label.append(result["label"])
                         mask.append(result["mask"])
                         speed.append(result["speed"])
             return frames, label, mask, speed, self.index
@@ -1054,8 +1059,11 @@ class CDF(Dataset):
         self.scale = config.scale
         self.pack = bool(config.pack)
         self.split = split
-        # available clips per data
+        # video info list
         self.video_list = []
+
+        # record missing videos in the csv file for further usage.
+        self.stray_videos = {}
 
         # stacking data clips
         self.stack_video_clips = []
@@ -1067,6 +1075,7 @@ class CDF(Dataset):
         self.video_table = {}
 
         progress_bar = tqdm(["REAL", "FAKE"], disable=not accelerator.is_local_main_process)
+        
         for label in progress_bar:
             # description
             progress_bar.set_description(f"{label}/videos")
@@ -1128,13 +1137,14 @@ class CDF(Dataset):
             for filename in video_list["name"]:
                 name, ext = os.path.splitext(filename)
                 if name in self.video_table[label]:
-                    clips = int(
-                        self.video_table[label][name]["duration"] // self.clip_duration)
+                    clips = int(self.video_table[label][name]["duration"] // self.clip_duration)
                     if (clips > 0):
                         _videos.append((label.upper(), name, clips))
                 else:
                     accelerator.print(
-                        f'Warning: video {path.join(self.root, label, "videos", name)} does not present in the processed dataset.')
+                        f'Warning: video {path.join(self.root, label, "videos", name)} does not present in the processed dataset.'
+                    )
+                    self.stray_videos[filename] = (0 if label == "REAL" else 1)
             self.video_list += _videos[:int(self.scale * len(_videos))]
 
         # stacking up the amount of data clips for further usage
@@ -1153,8 +1163,9 @@ class CDF(Dataset):
         if (self.pack):
             start = 0 if idx == 0 else self.stack_video_clips[idx - 1]
             end = self.stack_video_clips[idx]
+            label, _, _ = self.video_list[idx]
+            label = (0 if label == "REAL" else 1)
             frames = []
-            label = []
             mask = []
             for i in range(start, end):
                 try:
@@ -1164,7 +1175,6 @@ class CDF(Dataset):
                     continue
                 else:
                     frames.append(result["frames"])
-                    label.append(result["label"])
                     mask.append(result["mask"])
             return frames, label, mask, self.index
         else:
@@ -1268,11 +1278,14 @@ class DFDC(Dataset):
         self.scale = config.scale
         self.pack = bool(config.pack)
         self.split = split
-        # available clips per data
+        # video info list
         self.video_list = []
 
         # stacking data clips
         self.stack_video_clips = []
+
+        # record missing videos in the csv file for further usage.
+        self.stray_videos = {}
 
         self._build_video_table(accelerator)
         self._build_video_list(accelerator)
@@ -1345,7 +1358,10 @@ class DFDC(Dataset):
                     _videos.append((label, name, clips))
             else:
                 accelerator.print(
-                    f'Warning: video {path.join(self.root, label, "videos", name)} does not present in the processed dataset.')
+                    f'Warning: video {path.join(self.root, label, "videos", name)} does not present in the processed dataset.'
+                )
+                self.stray_videos[filename] = (0 if label == "REAL" else 1)
+
         self.video_list += _videos[:int(self.scale * len(_videos))]
 
         # stacking up the amount of data clips for further usage
@@ -1363,9 +1379,10 @@ class DFDC(Dataset):
     def __getitem__(self, idx):
         if (self.pack):
             start = 0 if idx == 0 else self.stack_video_clips[idx - 1]
+            label, _, _ = self.video_list[idx]
+            label = (0 if label == "REAL" else 1)
             end = self.stack_video_clips[idx]
             frames = []
-            label = []
             mask = []
             for i in range(start, end):
                 try:
@@ -1375,7 +1392,6 @@ class DFDC(Dataset):
                     continue
                 else:
                     frames.append(result["frames"])
-                    label.append(result["label"])
                     mask.append(result["mask"])
             return frames, label, mask, self.index
         else:
