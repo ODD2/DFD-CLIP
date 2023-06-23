@@ -6,5 +6,7 @@ __pycache__
 wandb/
 *.env
 datasets/
+datasets
 misc/
+misc
 .cache/

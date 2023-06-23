@@ -87,9 +87,46 @@
             "module": "preprocessing.extract_faces",
             "justMyCode": true,
             "args": [
-                "--root-dir=/home/od/Desktop/Dataset/DFDC",
+                "--root-dir=/home/od/Desktop/Dataset/CelebDF/Real",
                 "--glob-exp=*",
-                "--save-folder=test"
+                // "--root-dir=/stock/FaceForensicC23/",
+                // "--glob-exp=*/*",
+                "--save-folder=cropped_faces"
+            ]
+        },
+        {
+            "name": "Python: Landmarks",
+            "type": "python",
+            "request": "launch",
+            "module": "preprocessing.extract_landmarks",
+            "justMyCode": false,
+            "args": [
+                // "--root-dir=/stock/FaceForensicC23/",
+                "--root-dir=/stock/DFDC/",
+                "--video-dir=videos",
+                "--lm-dir=test_lm",
+                "--ff-dir=test_ff",
+                "--stride=20",
+                // "--glob-exp=*/*",
+                "--glob-exp=*",
+                "--save-mode=pack",
+                "--batch=5",
+                "--skip-face"
+            ]
+        },
+        {
+            "name": "Python: Check LM Consist",
+            "type": "python",
+            "request": "launch",
+            "module": "preprocessing.landmark_const_check",
+            "justMyCode": true,
+            "args": [
+                // "--root-dir=/home/od/Desktop/Dataset/DFDC/",
+                // "--glob-exp=*"
+                "--root-dir=/home/od/Desktop/Dataset/CelebDF/Fake",
+                "--glob-exp=*"
+                // "--root-dir=/stock/FaceForensicC23/",
+                // "--glob-exp=*/*"
             ]
         },
     ]
