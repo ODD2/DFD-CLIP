@@ -90,7 +90,8 @@ def main(args):
 
         stats[ds_cfg.name] = {
             "label": [],
-            "prob": []
+            "prob": [],
+            "meta": []
         }
         test_dataloader = accelerator.prepare(
             DataLoader(
@@ -108,7 +109,7 @@ def main(args):
         N = args.batch_size
         progress_bar = tqdm(test_dataloader, disable=not accelerator.is_local_main_process)
         for i, data in enumerate(progress_bar):
-            clips, label, masks, task_index = *data[:3], data[-1]
+            clips, label, masks, meta, task_index = *data[:3], data[-2], data[-1]
             if (len(clips) == 0):
                 logging.error(f"video '{i}' cannot provide clip for inference, skipping...")
                 pred_prob = torch.tensor([[0.5,0.5]])
@@ -154,8 +155,11 @@ def main(args):
                 (pred_prob, pred_label, label)
             )
 
+            # statistic recordings
             stats[ds_cfg.name]["label"] += labels.tolist()
             stats[ds_cfg.name]["prob"] += pred_probs[:, 1].tolist()
+            if args.modality == "video":
+                stats[ds_cfg.name]["meta"].append(meta)
 
             if accelerator.is_local_main_process:
                 accuracy_calc.add_batch(references=labels, predictions=pred_labels)
@@ -166,12 +170,17 @@ def main(args):
             roc_auc_calc.add_batch(references=[0, 1], prediction_scores=[0, 1])  # prob of real class
 
             # add straying videos into metric calculation
-            stray_labels = list(test_dataset.stray_videos.values())
+            stray_names = list(test_dataset.stray_videos.keys())
+            stray_labels = [test_dataset.stray_videos[name] for name in stray_names]
             stray_preds =  [0 if i > 0.5 else 1 for i in stray_labels]
             stray_probs = [0.5] * len(stray_labels)
             accuracy_calc.add_batch(references=stray_labels, predictions=stray_preds)
             roc_auc_calc.add_batch(references=stray_labels, prediction_scores=stray_probs)
-
+            stats[ds_cfg.name]["label"] += stray_preds
+            stats[ds_cfg.name]["prob"] += stray_probs
+            if args.modality == "video":
+                stats[ds_cfg.name]["meta"] += [{"path": name,"stray": 1} for name in stray_names]
+            
             accuracy = round(accuracy_calc.compute()['accuracy'], 3)
             roc_auc = round(roc_auc_calc.compute()['roc_auc'], 3)
             logging.info(f'accuracy: {accuracy}, roc_auc: {roc_auc}')

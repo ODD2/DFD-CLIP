@@ -95,7 +95,7 @@ class MultiheadAttention(nn.Module):
     def __init__(self, config, num_frames, embed_dim, n_head):
         self.num_frames = num_frames
         self.attn_mode = [] if not "attn_mode" in config.op_mode else config.op_mode.attn_mode.split("+")
-
+        self.attn_record = True if "attn_record" in config.op_mode and config.op_mode.attn_record else False
         def smax(q, k, m):
             """
             softmax in the original Transformer
@@ -132,6 +132,8 @@ class MultiheadAttention(nn.Module):
 
         self.embed_dim = embed_dim
         self.n_head = n_head
+        
+        self.aff = None
 
     def forward(self, q, k, v, m):
         qs = self.in_proj(q).view(*q.shape[:2], self.n_head, -1).split(self.embed_dim // self.n_head, -1)
@@ -140,6 +142,9 @@ class MultiheadAttention(nn.Module):
         aff = 0
         for i in range(self.n_act):
             aff += self.activations[i](qs[i], k, m) / self.n_act
+
+        if self.attn_record:
+            self.aff = aff
 
         mix = torch.einsum('nqlh,nlhc->nqhc', aff, v)
 

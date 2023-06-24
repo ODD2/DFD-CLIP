@@ -521,8 +521,9 @@ class FFPP(Dataset):
         if (self.pack):
             start = 0 if idx == 0 else self.stack_video_clips[idx - 1]
             end = self.stack_video_clips[idx]
-            label, _, _, _ = self.video_list[idx]
-            label = (0 if label == "REAL" else 1)
+            df_type, comp, name, clips = self.video_list[idx]
+            meta = self.video_table[df_type][comp][name]
+            label = (0 if df_type == "REAL" else 1)
             frames = []
             mask = []
             speed = []
@@ -537,7 +538,7 @@ class FFPP(Dataset):
                         frames.append(result["frames"][comp])
                         mask.append(result["mask"])
                         speed.append(result["speed"])
-            return frames, label, mask, speed, self.index
+            return frames, label, mask, speed, meta, self.index
         elif (self.contrast):
             result = []
             if (self.ssl_fake and random.random() > 0.5):
@@ -709,6 +710,10 @@ class FFPP(Dataset):
     def video_info(self, idx):
         video_idx = next(i for i, x in enumerate(self.stack_video_clips) if idx < x)
         return video_idx, *self.video_list[video_idx]
+
+    def video_meta(self,idx):
+        df_type, comp, name =  self.video_info(idx)[1:4]
+        return self.video_table[df_type][comp][name]
 
     def collate_fn(self, batch):
         _frames, _label, _mask, _speed, _index = list(zip(*batch))
@@ -1163,8 +1168,9 @@ class CDF(Dataset):
         if (self.pack):
             start = 0 if idx == 0 else self.stack_video_clips[idx - 1]
             end = self.stack_video_clips[idx]
-            label, _, _ = self.video_list[idx]
-            label = (0 if label == "REAL" else 1)
+            df_type, name, clips = self.video_list[idx]
+            meta = self.video_table[df_type][name]
+            label = (0 if df_type == "REAL" else 1)
             frames = []
             mask = []
             for i in range(start, end):
@@ -1176,7 +1182,7 @@ class CDF(Dataset):
                 else:
                     frames.append(result["frames"])
                     mask.append(result["mask"])
-            return frames, label, mask, self.index
+            return frames, label, mask, meta, self.index
         else:
             result = self.get_dict(idx)
             return result["frames"], result["label"], result["mask"], self.index
@@ -1379,7 +1385,8 @@ class DFDC(Dataset):
     def __getitem__(self, idx):
         if (self.pack):
             start = 0 if idx == 0 else self.stack_video_clips[idx - 1]
-            label, _, _ = self.video_list[idx]
+            label, name, _ = self.video_list[idx]
+            meta = self.video_table[name]
             label = (0 if label == "REAL" else 1)
             end = self.stack_video_clips[idx]
             frames = []
@@ -1393,7 +1400,7 @@ class DFDC(Dataset):
                 else:
                     frames.append(result["frames"])
                     mask.append(result["mask"])
-            return frames, label, mask, self.index
+            return frames, label, mask, meta, self.index
         else:
             result = self.get_dict(idx)
             return result["frames"], result["label"], result["mask"], self.index
