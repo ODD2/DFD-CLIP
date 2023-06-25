@@ -215,6 +215,9 @@ def main(params):
     # initialize model
     model = globals()[config.model.name](config.model, accelerator=accelerator, num_frames=config.data.num_frames, )
 
+    # watch models
+    wandb.watch(model,log="gradients",log_freq=100)
+
     # category to task index mapping
     category_index = {
         cat: i for i, cat in enumerate(set([cfg.category for cfg in config.data.train]))
