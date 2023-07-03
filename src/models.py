@@ -96,6 +96,7 @@ class MultiheadAttention(nn.Module):
         self.num_frames = num_frames
         self.attn_mode = [] if not "attn_mode" in config.op_mode else config.op_mode.attn_mode.split("+")
         self.attn_record = True if "attn_record" in config.op_mode and config.op_mode.attn_record else False
+
         def smax(q, k, m):
             """
             softmax in the original Transformer
@@ -132,7 +133,7 @@ class MultiheadAttention(nn.Module):
 
         self.embed_dim = embed_dim
         self.n_head = n_head
-        
+
         self.aff = None
 
     def forward(self, q, k, v, m):
@@ -783,6 +784,12 @@ class Detector(nn.Module):
             ])
         else:
             raise NotImplementedError()
+
+    def train(self, mode=True):
+        super().train(mode)
+        if (mode):
+            self.encoder.eval()
+        return self
 
 
 class CompInvAdapter(nn.Module):
