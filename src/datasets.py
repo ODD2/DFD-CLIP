@@ -299,6 +299,7 @@ class FFPP(Dataset):
 
             if "dev-mode" in config.augmentation:
                 if "force-rgb" in config.augmentation:
+                    logging.debug("Forcing RGB operation")
                     self.sequence_augmentation = alb.ReplayCompose(
                         [
                             alb.RGBShift((-20, 20), (-20, 20), (-20, 20), p=1.)
@@ -306,6 +307,7 @@ class FFPP(Dataset):
                         p=1.
                     )
                 elif "force-hue" in config.augmentation:
+                    logging.debug("Forcing HUE operation")
                     self.sequence_augmentation = alb.ReplayCompose(
                         [
                             alb.HueSaturationValue(
@@ -318,6 +320,7 @@ class FFPP(Dataset):
                         p=1.
                     )
                 elif "force-bright" in config.augmentation:
+                    logging.debug("Forcing Bright operation")
                     self.sequence_augmentation = alb.ReplayCompose(
                         [
                             alb.RandomBrightnessContrast(
@@ -711,8 +714,8 @@ class FFPP(Dataset):
         video_idx = next(i for i, x in enumerate(self.stack_video_clips) if idx < x)
         return video_idx, *self.video_list[video_idx]
 
-    def video_meta(self,idx):
-        df_type, comp, name =  self.video_info(idx)[1:4]
+    def video_meta(self, idx):
+        df_type, comp, name = self.video_info(idx)[1:4]
         return self.video_table[df_type][comp][name]
 
     def collate_fn(self, batch):
@@ -1080,7 +1083,7 @@ class CDF(Dataset):
         self.video_table = {}
 
         progress_bar = tqdm(["REAL", "FAKE"], disable=not accelerator.is_local_main_process)
-        
+
         for label in progress_bar:
             # description
             progress_bar.set_description(f"{label}/videos")
