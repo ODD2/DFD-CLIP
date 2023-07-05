@@ -1,3 +1,4 @@
+import logging
 import wandb
 import torch
 import evaluate
@@ -133,7 +134,7 @@ def compute_metrics(agent):
         agent.compute_losses[f"loss/{lname}"] = sum(agent.losses[lname]) / len(agent.losses[lname])
         agent.losses[lname].clear()
 
-    agent.accelerator.print(
+    logging.info(
         {
             **agent.compute_losses,
             **agent.compute_metrics

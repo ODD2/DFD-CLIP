@@ -5,25 +5,25 @@ data:
     category: Deepfake
     compressions:
     - c23
-    contrast: false
+    contrast: 0
     detection_level: video
     name: FFPP
-    pack: false
-    pair: false
-    root_dir: ./datasets/ffpp/
+    pack: 0
+    pair: 0
+    root_dir: ./datasets/ffpp_200/
     scale: 1.0
     types:
     - REAL
     - NT
   - category: Deepfake
     name: DFDC
-    pack: false
-    root_dir: ./datasets/dfdc/
+    pack: 0
+    root_dir: ./datasets/dfdc_200/
     scale: 0.1
   - category: Deepfake
     name: CDF
-    pack: false
-    root_dir: ./datasets/cdf/
+    pack: 0
+    root_dir: ./datasets/cdf_200/
     scale: 1.0
   num_frames: 20
   train:
@@ -31,12 +31,12 @@ data:
     category: Deepfake
     compressions:
     - c23
-    contrast: true
+    contrast: 1
     detection_level: video
     name: FFPP
-    pack: false
-    pair: false
-    root_dir: ./datasets/ffpp/
+    pack: 0
+    pair: 0
+    root_dir: ./datasets/ffpp_200/
     scale: 1.0
     types:
     - REAL

@@ -3,6 +3,7 @@ import random
 import logging
 import numpy as np
 from math import comb
+from enum import auto, IntEnum
 from itertools import combinations
 from collections import OrderedDict
 
@@ -12,24 +13,46 @@ from torch import nn
 from . import clip
 import torchvision.transforms as T
 
+class AttnMode(IntEnum):
+    PATCH = auto()
+    FRAME = auto()
+    TEMPORAL = auto()
+
+class Foundations(IntEnum):
+    CLIP = auto()
+    DINO2 = auto()
+
+class DecodeMode(IntEnum):
+    INDEX = auto()
+    STRIDE = auto()
+
+class AdaptorMode(IntEnum):
+    PRETRAIN = auto()
+    NORMAL = auto()
+    NONE = auto()
+
+class TemporalMetric(IntEnum):
+    RANK = auto()
+    TRIPLET = auto()
+    NONE = auto()
+
+class PatchMaskMode(IntEnum):
+    BATCH = auto()
+    SAMPLE = auto()
+    GUIDE = auto()
+    NONE = auto()
+
+class CompMetric(IntEnum):
+    FEATURE=auto()
+    SYNC=auto()
+    NONE = auto()
+
+class Optimizers(IntEnum):
+    SGD = auto()
+    ADAMW= auto()
 
 class Object(object):
     pass
-
-
-def mse(logits, y):
-    value = torch.pow(
-        logits[:, :140].softmax(dim=-1) @ torch.tensor([i for i in range(140)]).float().to(logits.device) - y,
-        2
-    )
-    return value / 1000
-
-
-def kl_div(*args, **kargs):
-    def driver(logits, y):
-        return torch.nn.functional.kl_div(torch.nn.functional.log_softmax(logits, dim=1), y, reduction='none')
-    return driver
-
 
 def auc_roc(weight=None, label_smoothing=0.0, *args, **kargs):
     def driver(logits, y, _weight=weight, _label_smoothing=label_smoothing):
@@ -44,16 +67,10 @@ def auc_roc(weight=None, label_smoothing=0.0, *args, **kargs):
         )
     return driver
 
-
 def disable_gradients(module: nn.Module):
     for params in module.parameters():
         params.requires_grad = False
     return module
-
-
-def kvs_to_device(kvs, device):
-    return [{k: v.to(device) for k, v in _kv.items()} for _kv in kvs]
-
 
 class LayerNorm(nn.LayerNorm):
     """
@@ -67,7 +84,6 @@ class LayerNorm(nn.LayerNorm):
         ret = super().forward(x.type(torch.float32))
         return ret.type(orig_type)
 
-
 class QuickGELU(nn.Module):
     """
     Ported from:
@@ -76,7 +92,6 @@ class QuickGELU(nn.Module):
 
     def forward(self, x: torch.Tensor):
         return x * torch.sigmoid(1.702 * x)
-
 
 class MultiheadAttention(nn.Module):
     """
@@ -94,8 +109,8 @@ class MultiheadAttention(nn.Module):
 
     def __init__(self, config, num_frames, embed_dim, n_head):
         self.num_frames = num_frames
-        self.attn_mode = [] if not "attn_mode" in config.op_mode else config.op_mode.attn_mode.split("+")
-        self.attn_record = True if "attn_record" in config.op_mode and config.op_mode.attn_record else False
+        self.attn_mode = config.op_mode.attn_mode
+        self.attn_record = config.op_mode.attn_record
 
         def smax(q, k, m):
             """
@@ -103,17 +118,22 @@ class MultiheadAttention(nn.Module):
             """
             aff = torch.einsum('nqhc,nkhc->nqkh', q / (q.size(-1) ** 0.5), k)
             aff = aff.masked_fill(~m, float('-inf'))
-            if len(self.attn_mode) == 0:
+            n, q, k, h = aff.shape
+            affinities = []
+
+            if AttnMode.PATCH in self.attn_mode:
+                logging.debug("perform patch mode attention.")
                 return aff.softmax(dim=-2)
-            else:
-                n, q, k, h = aff.shape
-                affinities = []
-                aff = aff.view((n, q, self.num_frames, -1, h))
-                if "frame" in self.attn_mode:
-                    affinities.append(aff.softmax(dim=-2))
-                if "temporal" in self.attn_mode:
-                    affinities.append(aff.softmax(dim=-3))
-                return sum(affinities).view((n, q, k, h))
+
+            if AttnMode.FRAME in self.attn_mode:
+                logging.debug("perform frame mode attention.")
+                affinities.append(aff.view((n, q, self.num_frames, -1, h)).softmax(dim=-2).view((n, q, k, h)))
+
+            if AttnMode.TEMPORAL in self.attn_mode:
+                logging.debug("perform temporal mode attention.")
+                affinities.append(aff.view((n, q, self.num_frames, -1, h)).softmax(dim=-3).view((n, q, k, h)))
+
+            return sum(affinities) / len(affinities)
 
         def coda(q, k, m):
             """
@@ -145,12 +165,12 @@ class MultiheadAttention(nn.Module):
             aff += self.activations[i](qs[i], k, m) / self.n_act
 
         if self.attn_record:
+            logging.debug("recording attention results.")
             self.aff = aff
 
         mix = torch.einsum('nqlh,nlhc->nqhc', aff, v)
 
         return self.out_proj(mix.flatten(-2))
-
 
 class ResidualAttentionBlock(nn.Module):
     """
@@ -182,10 +202,11 @@ class ResidualAttentionBlock(nn.Module):
         return x
 
     def _apply_reference(self, config, block_index, layer_indices, reference_layers):
-        """
-        use CLIP weights to initialize decoder
-        """
-        if config.foundation == "clip":
+
+        if config.foundation == Foundations.CLIP:
+            """
+                use CLIP weights to initialize decoder
+            """
             def fetch_ln1_params(layer_idx):
                 return reference_layers[layer_idx].ln_1.state_dict()
 
@@ -195,7 +216,10 @@ class ResidualAttentionBlock(nn.Module):
             def fetch_mlp_params(layer_idx):
                 return reference_layers[layer_idx].mlp.state_dict()
 
-        elif config.foundation == "dinov2":
+        elif config.foundation == Foundations.DINO2:
+            """
+                use DINO2 weights to initialize decoder
+            """
             def fetch_ln1_params(layer_idx):
                 return reference_layers[layer_idx].norm1.state_dict()
 
@@ -213,13 +237,11 @@ class ResidualAttentionBlock(nn.Module):
                     mapped_weights[k] = v
 
                 return mapped_weights
-            # def fetch_mlp_params(layer_idx):
-            #     return reference_layers[layer_idx].mlp.state_dict()
-
         else:
             raise NotImplementedError()
 
-        if ("concat_ref" in config and config.concat_ref):
+        if (config.concat_ref):
+            logging.debug("perform concatenation reference initialization.")
             current_layer = layer_indices[block_index]
             self.ln_1.load_state_dict(fetch_ln1_params(current_layer))
             self.ln_2.load_state_dict(fetch_ln2_params(current_layer))
@@ -229,11 +251,11 @@ class ResidualAttentionBlock(nn.Module):
             else:
                 self.mlp.load_state_dict(fetch_mlp_params(current_layer))
         else:
+            logging.debug("perform noraml reference initialization.")
             current_layer = layer_indices[block_index]
             self.ln_1.load_state_dict(fetch_ln1_params(current_layer))
             self.mlp.load_state_dict(fetch_mlp_params(current_layer))
             self.ln_2.load_state_dict(fetch_ln2_params(current_layer))
-
 
 class Transformer(nn.Module):
     """
@@ -243,6 +265,7 @@ class Transformer(nn.Module):
 
     def __init__(self, width: int, heads: int, config, num_frames, layer_indices, reference_layers):
         super().__init__()
+        self.config = config
         self.width = width
         self.resblocks = []
         for block_index in range(len(layer_indices)):
@@ -253,27 +276,30 @@ class Transformer(nn.Module):
                 )
             )
 
-        self.augment_query_embeddings = []
-        if "aug_query" in config.op_mode and config.op_mode.aug_query:
+        # augmentive query
+        
+        if config.op_mode.aug_query:
+            self.augment_queries = []
             for i in range(len(layer_indices) - 1):
                 name = f"augment_query_{i}"
                 setattr(self, name, nn.Parameter(torch.zeros(width)))
-                self.augment_query_embeddings.append(getattr(self, name))
+                self.augment_queries.append(getattr(self, name))
 
         self.resblocks = nn.Sequential(*self.resblocks)
 
     def forward(self, x: torch.Tensor, kvs, m):
         result = []
+
         for i, blk, kv in zip(range(len(self.resblocks)), self.resblocks, kvs):
             x = blk(x, kv['k'], kv['v'], m)
             result.append(x)
 
-            if len(self.augment_query_embeddings) > 0:
+            if self.config.op_mode.aug_query:
+                logging.debug("perform augmentation query embedding.")
                 if not (i == len(self.resblocks) - 1):
-                    x = x + self.augment_query_embeddings[i]
+                    x = x + self.augment_queries[i]
 
         return torch.cat(result, dim=1)
-
 
 class Decoder(nn.Module):
     """
@@ -285,16 +311,15 @@ class Decoder(nn.Module):
 
     def __init__(self, detector, config, num_frames):
         super().__init__()
+        self.config = config
         width = detector.encoder.width
         heads = detector.encoder.heads
         output_dims = config.out_dim
-        self.op_mode = config.op_mode
         scale = width ** -0.5
         self.class_embedding = nn.Parameter(scale * torch.randn(width))
-        if "temporal_position" in config.op_mode and config.op_mode.temporal_position:
+
+        if self.config.op_mode.temporal_position:
             self.positional_embedding = nn.Parameter(scale * torch.randn(num_frames, 1, heads, width // heads))
-        else:
-            self.positional_embedding = None
 
         self.ln_pre = LayerNorm(width)
         self.drop_pre = torch.nn.Dropout(config.dropout)
@@ -313,7 +338,7 @@ class Decoder(nn.Module):
         for i, output_dim in enumerate(output_dims):
             layer_matrices = []
 
-            if "global_prediction" in self.op_mode and self.op_mode.global_prediction:
+            if self.config.op_mode.global_prediction:
                 for l in detector.layer_indices:
                     _name = f"proj{i}x{output_dim}_L{l}"
                     setattr(self, _name, nn.Parameter(scale * torch.randn(width, output_dim)))
@@ -329,7 +354,8 @@ class Decoder(nn.Module):
     def forward(self, kvs, m):
         m = m.repeat_interleave(kvs[0]['k'].size(2), dim=-1)
         # add temporasitional embedding
-        if (not self.positional_embedding == None):
+        if self.config.op_mode.temporal_position:
+            logging.debug("perform temporal position embedding.")
             for i in range(len(kvs)):
                 for k in kvs[i].keys():
                     kvs[i][k] = kvs[i][k] + self.positional_embedding
@@ -342,13 +368,16 @@ class Decoder(nn.Module):
         x = self.class_embedding.view(1, 1, -1).repeat(kvs[0]['k'].size(0), 1, 1)
         x = self.drop_pre(self.ln_pre(x))
         x = self.transformer(x, kvs, m)
+
         # drop the layer features if not required
         if (len(self.task_projections[0]) == 1):
             x = x[:, -1]
+
         x = self.drop_post(self.ln_post(x))
         video_feature = x.squeeze(1)
 
-        if "global_prediction" in self.op_mode and self.op_mode.global_prediction:
+        if self.config.op_mode.global_prediction:
+            logging.debug("perform weighted global prediction.")
             task_logits = [
                 sum(
                     [
@@ -362,10 +391,13 @@ class Decoder(nn.Module):
                 for layer_matrices in self.task_projections
             ]
         else:
-            task_logits = [video_feature @ layer_matrices[-1] for layer_matrices in self.task_projections]
+            logging.debug("perform last logit prediction.")
+            task_logits = [
+                video_feature @ layer_matrices[-1]
+                for layer_matrices in self.task_projections
+            ]
 
         return task_logits, video_feature
-
 
 class DINOv2(nn.Module):
     def __init__(self):
@@ -396,7 +428,6 @@ class DINOv2(nn.Module):
         ]
         return ret
 
-
 class Detector(nn.Module):
     """
     Deepfake video detector (also a video classifier)
@@ -411,48 +442,148 @@ class Detector(nn.Module):
     """
     @staticmethod
     def get_default_config():
-        C = CN(new_allowed=True)
+        C = CN()
         C.name = "Detector"
-        C.foundation = "clip"
+        C.foundation = Foundations.CLIP.name.lower()
         C.architecture = 'ViT-B/16'
-        C.decode_mode = "stride"
-        C.decode_stride = 2
-        C.decode_indices = []
+
+        # decode mode
+        C.decode_mode = CN()
+        C.decode_mode.type = DecodeMode.INDEX.name.lower()
+        # > argument for INDEX mode
+        C.decode_mode.indices = []
+        # > argument for STRIDE mode
+        C.decode_mode.stride = -1
+
+        # output dimension, for multiple tasks
         C.out_dim = []
+
+        # output losses
         C.losses = []
-        C.concat_ref = 0
+
+        # concatenation to reference layers
+        C.concat_ref = False
+
         # adapter configurations
-        C.adapter = CN(new_allowed=True)
-        C.adapter.type = "none"
+        C.adapter = CN()
+        C.adapter.type = AdaptorMode.NONE.name.lower()
+        C.adapter.struct = CN(new_allowed=True)
+        C.adapter.frozen = False
+        C.adapter.path = ""
+
         # training mode configurations
-        C.train_mode = CN(new_allowed=True)
+        C.train_mode = CN()
+        # > temporal learning
+        C.train_mode.temporal = TemporalMetric.NONE.name.lower()
+        # > compression learning
+        C.train_mode.compression = CompMetric.NONE.name.lower()
+        # > patch mask
+        C.train_mode.patch_mask = CN()
+        C.train_mode.patch_mask.type = PatchMaskMode.NONE.name.lower()
+        # - argument for GUIDED masking mode.
+        C.train_mode.patch_mask.path = ""
+        # - unmask patch ratio
+        C.train_mode.patch_mask.ratio = 1.0
+        # > nerf losses from raw label samples
+        C.train_mode.nerf_raw = -1.0
+        
+
         # operation mode configurations
-        C.op_mode = CN(new_allowed=True)
-        C.op_mode.temporal_position = 1
+        C.op_mode = CN()
+        # > temporal positional embedding
+        C.op_mode.temporal_position = True
+        # > smax attention mode
+        C.op_mode.attn_mode = AttnMode.PATCH.name.lower()
+        # > record attention scores
+        C.op_mode.attn_record = False
+        # > weighted global prediction
+        C.op_mode.global_prediction = False
+        # > augmentation queries
+        C.op_mode.aug_query = False
+        # > exponent moving average frames
+        C.op_mode.ema_frame = -1.0
+
         # regularization
         C.dropout = 0.0
         C.weight_decay = 0.01
+
         # optimizer
-        C.optimizer = "sgd"
+        C.optimizer = Optimizers.SGD.name.lower()
+
         return C
+
+    @staticmethod
+    def validate_config(config):
+        config = config.clone()
+
+        config.foundation = int(Foundations[config.foundation.upper()])
+        
+        config.decode_mode.type = int(DecodeMode[config.decode_mode.type.upper()])
+        if config.decode_mode.type == DecodeMode.STRIDE:
+            assert config.decode_mode.indices == int
+            assert config.decode_mode.stride > 0, "invalid value for decode stride."
+        elif config.decode_mode.type == DecodeMode.INDEX:
+            assert type(config.decode_mode.indices) == list
+            assert len(config.decode_mode.indices) > 0, "indices unspecified for decoding."
+
+        assert type(config.out_dim) == list
+
+        assert type(config.losses) == list
+
+        assert type(config.concat_ref) == bool
+
+        config.adapter.type = int(AdaptorMode[config.adapter.type.upper()])
+        if(config.adapter.type==AdaptorMode.PRETRAIN):
+            assert type(config.adapter.path)== str 
+            assert len(config.adapter.path) > 0
+            assert type(config.adapter.frozen) == bool
+        
+        config.train_mode.temporal = int(TemporalMetric[config.train_mode.temporal.upper()])
+
+        config.train_mode.compression = int(CompMetric[config.train_mode.compression.upper()])
+
+        config.train_mode.patch_mask.type = int(PatchMaskMode[config.train_mode.patch_mask.type.upper()])
+        assert type(config.train_mode.patch_mask.ratio) == float
+        assert 0 < config.train_mode.patch_mask.ratio <= 1
+        if config.train_mode.patch_mask.type == PatchMaskMode.GUIDE:
+            assert type(config.train_mode.patch_mask.path) == str
+            assert len(config.train_mode.patch_mask.path) > 0
+
+        assert type(config.train_mode.nerf_raw) == float
+        if config.train_mode.nerf_raw > 0:
+            assert 0 <= config.train_mode.nerf_raw <= 1.0
+
+        config.op_mode.attn_mode = [int(AttnMode[opt.upper()]) for opt in config.op_mode.attn_mode.split("+")]
+        assert type(config.op_mode.temporal_position) == bool
+        assert type(config.op_mode.attn_record) == bool
+        assert type(config.op_mode.global_prediction) == bool
+        assert type(config.op_mode.aug_query) == bool
+
+        assert type(config.op_mode.ema_frame) == float
+        if config.op_mode.ema_frame > 0:
+            assert 0 <= config.op_mode.ema_frame <= 1
+        
+        assert type(config.dropout) == float
+        assert 0 <= config.dropout <= 1
+
+        assert type(config.weight_decay) == float
+        assert 0 <= config.weight_decay <= 1
+
+        config.optimizer = int(Optimizers[config.optimizer.upper()])
+
+        return config
 
     def __init__(self, config, num_frames, accelerator):
         super().__init__()
-        assert config.decode_mode in ["stride", "index"]
+        config =  self.validate_config(config)
         self.config = config
 
         with accelerator.main_process_first():
-            if config.foundation == "clip":
+            if config.foundation == Foundations.CLIP:
                 self.encoder = disable_gradients(clip.load(config.architecture)[0].visual.float())
-            elif config.foundation == "dinov2":
+            elif config.foundation == Foundations.DINO2:
                 self.encoder = disable_gradients(DINOv2())
-
-        self.decode_mode = config.decode_mode
-        self.out_dim = config.out_dim
-        self.weight_decay = config.weight_decay
-        self.optimizer = config.optimizer
-        self.train_mode = config.train_mode
-        self.op_mode = config.op_mode
+        
         self.losses = []
 
         for loss in config.losses:
@@ -461,22 +592,20 @@ class Detector(nn.Module):
             else:
                 self.losses.append(globals()[loss.name](**(dict(loss.args) if "args" in loss else {})))
 
-        if (self.decode_mode == "stride"):
-            self.layer_indices = list(range(0, len(self.encoder.transformer.resblocks), config.decode_stride))
-        elif (self.decode_mode == "index"):
-            self.layer_indices = config.decode_indices
-        else:
-            raise Exception(f"Unknown decode type: {self.decode_type}")
+        if (config.decode_mode.type == DecodeMode.STRIDE):
+            self.layer_indices = list(range(0, len(self.encoder.transformer.resblocks), config.decode_mode.stride))
+        elif (config.decode_mode.type == DecodeMode.INDEX):
+            self.layer_indices =  config.decode_mode.indices
 
         self.decoder = Decoder(self, config, num_frames)
 
-        if (config.adapter.type == "none"):
+        if (config.adapter.type == AdaptorMode.NONE):
             self.adapter = None
-        elif (config.adapter.type == "normal"):
-            self.adapter = CompInvAdapter(config, self, num_frames=num_frames)
+        elif (config.adapter.type == AdaptorMode.NORMAL):
+            self.adapter = Adaptor(config, self, num_frames=num_frames)
             logging.info("Adapter operates without pretrained weights!!!")
-        elif (config.adapter.type == "pretrain"):
-            self.adapter = CompInvAdapter(config, self, num_frames=num_frames)
+        elif (config.adapter.type == AdaptorMode.PRETRAIN):
+            self.adapter = Adaptor(config, self, num_frames=num_frames)
             data = torch.load(config.adapter.path)
             data = {
                 '.'.join(k.split('.')[1:]): v for k, v in data.items() if "adapter" in k
@@ -485,20 +614,19 @@ class Detector(nn.Module):
             if (config.adapter.frozen):
                 self.adapter = disable_gradients(self.adapter)
             logging.info(f"Adapter operates with pretrained weights:{config.adapter.path}")
-        else:
-            raise NotImplementedError()
+
         # transformations
         self.transform = self._transform(self.encoder.input_resolution)
 
         # trainable parameters
-        if ("temporal" in self.train_mode and self.train_mode.temporal == "ranking"):
+        if (self.config.train_mode.temporal == TemporalMetric.RANK):
             self.ranking_transform_param = nn.Parameter(
                 (self.encoder.width**-0.5) * torch.randn(self.encoder.width, 1),
                 requires_grad=True
             )
 
-        if ("patch_mask" in self.train_mode and self.train_mode.patch_mask.type == "guide"):
-            with open(self.train_mode.patch_mask.path, "rb") as f:
+        if (self.config.train_mode.patch_mask.type == PatchMaskMode.GUIDE):
+            with open(self.config.train_mode.patch_mask.path, "rb") as f:
                 self.guide_map = pickle.load(f)
 
     def predict(self, x, m, with_video_features=False, with_adapt_features=False, train=False):
@@ -514,14 +642,16 @@ class Detector(nn.Module):
             # discard unwanted layers
             kvs = [kvs[i] for i in self.layer_indices]
 
-        if train and "patch_mask" in self.train_mode:
+        if train and not self.config.train_mode.patch_mask.type == PatchMaskMode.NONE:
+            logging.debug("enter patch masking block.")
             patch_indices = None
             num_patch = kvs[0]["k"].shape[2]
-            num_select = int(num_patch * self.train_mode.patch_mask.ratio)
+            num_select = int(num_patch * self.config.train_mode.patch_mask.ratio)
 
             # partially discard patch kv pairs
             for i in range(len(kvs)):
-                if self.train_mode.patch_mask.type == "batch":
+                if self.config.train_mode.patch_mask.type == PatchMaskMode.BATCH:
+                    logging.debug("perform batch patch masking.")
                     # discard patch localized out of the "batch" selected indices.
                     if type(patch_indices) == type(None):
                         patch_indices = np.random.choice(
@@ -529,27 +659,28 @@ class Detector(nn.Module):
                             num_select,
                             replace=False
                         )
-                elif self.train_mode.patch_mask.type == "sample":
+                elif self.config.train_mode.patch_mask.type == PatchMaskMode.SAMPLE:
+                    logging.debug("perform sample patch masking.")
                     # discard patch localized out of the randomly selected indices.
                     patch_indices = np.random.choice(
                         range(num_patch),
                         num_select,
                         replace=False
                     )
-                elif self.train_mode.patch_mask.type == "guide":
+                elif self.config.train_mode.patch_mask.type == PatchMaskMode.GUIDE:
+                    logging.debug("perform guide patch masking.")
                     patch_indices = np.random.choice(
                         range(num_patch),
                         num_select,
                         replace=False,
                         p=self.guide_map['v'][self.layer_indices[i]].flatten()
                     )
-                else:
-                    raise NotImplementedError()
 
                 for k in kvs[i]:
                     kvs[i][k] = kvs[i][k][:, :, patch_indices]
 
         if self.adapter:
+            logging.debug("perform feature adapting")
             kvs = self.adapter(kvs)
 
         task_logits, video_features = self.decoder(kvs, m)
@@ -575,8 +706,9 @@ class Detector(nn.Module):
         device = x.device
         b, t, c, h, w = x.shape
 
-        if ("ema_frame" in self.op_mode and self.op_mode.ema_frame):
-            ema_ratio = self.op_mode.ema_frame
+        if (self.config.op_mode.ema_frame > 0):
+            logging.debug("perform ema frame conversion")
+            ema_ratio = self.config.op_mode.ema_frame
             _x = torch.zeros((b, 1, c, h, w), device=x.device)
             for i in range(t):
                 _x = _x * ema_ratio + x[:, i].unsqueeze(1) * (1 - ema_ratio)
@@ -587,7 +719,10 @@ class Detector(nn.Module):
             x,
             m,
             with_video_features=True,
-            with_adapt_features=((not self.adapter == None) and ("compression" in self.train_mode)),
+            with_adapt_features=(
+                (not self.adapter == None) and
+                (not self.config.train_mode.compression == CompMetric.NONE)
+            ),
             train=train
         )
 
@@ -604,7 +739,9 @@ class Detector(nn.Module):
         other_losses = {}
 
         # compression related losses
-        if "compression" in self.train_mode:
+        if not self.config.train_mode.compression == CompMetric.NONE:
+            logging.debug("enter compression block.")
+
             kvs = features["adapt"]
             _l = len(self.layer_indices)
             _b, _t, _p, _h, _d = kvs[0]['k'].shape
@@ -613,16 +750,7 @@ class Detector(nn.Module):
             recon_loss = torch.tensor(0.0, device=device)
             match_loss = torch.tensor(0.0, device=device)
 
-            #######################################################
-            # recon_diff = torch.zeros((_t, _p, _h, _d), device=device)
-            # match_diff = torch.zeros((_t, _p, _h, _d), device=device)
-            #######################################################
-            # _source_feat = []
-            # _target_feat = []
-            #######################################################
-
             for i in range(_w):
-
                 if (comp[i * 2] == "raw"):
                     raw_i = i * 2
                     c23_i = i * 2 + 1
@@ -630,51 +758,30 @@ class Detector(nn.Module):
                     raw_i = i * 2 + 1
                     c23_i = i * 2
 
-                if self.train_mode.compression == "feature-match":
+                if self.config.train_mode.compression == CompMetric.FEATURE:
+                    logging.debug("compute compression metric in feature mode.")
                     match_loss += torch.nn.functional.kl_div(
                         torch.log_softmax(video_features[c23_i], dim=-1),
                         torch.log_softmax(video_features[raw_i], dim=-1),
                         log_target=True
                     ) / (_w)
-                else:
+                elif self.config.train_mode.compression == CompMetric.SYNC:
+                    logging.debug("compute compression metric in sync mode.")
                     for layer in range(_l):
                         for subject in ["k", "v"]:
-                            if self.train_mode.compression == "sync":
-                                #######################################################
-                                # match_diff += torch.abs(kvs[layer][subject][raw_i] - kvs[layer][subject][c23_i])
-                                #######################################################
-                                # _source_feat.append(kvs[layer][subject][c23_i])
-                                # _target_feat.append(kvs[layer][subject][raw_i])
-                                #######################################################
-
-                                # match_loss += torch.nn.functional.mse_loss(
-                                #     kvs[layer][subject][c23_i],
-                                #     kvs[layer][subject][raw_i]
-                                # ) / (_w * _l * 2)
                                 match_loss += torch.nn.functional.kl_div(
                                     torch.log_softmax(kvs[layer][subject][c23_i], dim=-1),
                                     torch.log_softmax(kvs[layer][subject][raw_i], dim=-1),
                                     log_target=True
                                 ) / (_w * _l * 2)
-                            else:
-                                raise NotImplementedError()
-
-            #######################################################
-            # recon_loss = torch.norm((recon_diff/(_w * _l *  2)).view((-1,_h*_d)).mean(dim=0))
-            # match_loss = torch.norm((match_diff/(_w * _l *  2)).view((-1,_h*_d)).mean(dim=0))
-            #######################################################
-            # match_loss = sum([
-            #     torch.nn.functional.mse_loss(_s, _t) / len(_source_feat)
-            #     for _s, _t in zip(_source_feat, _target_feat)
-            # ])
-            #######################################################
 
             other_losses["recon"] = recon_loss
             other_losses["match"] = 100 * match_loss
 
         # nerf the strength of raw samples
-        if "nerf_raw" in self.train_mode:
-            nerf_power = min(self.train_mode.nerf_raw, 0)
+        if self.config.train_mode.nerf_raw > 0:
+            logging.debug("perform raw sample label nerfing.")
+            nerf_power = min(self.config.train_mode.nerf_raw, 0)
             for i in range(len(task_losses)):
                 for j in range(_b):
                     if comp[j] == "raw":
@@ -683,11 +790,13 @@ class Detector(nn.Module):
                         task_losses[i][j] *= (2 - nerf_power)
 
         # temporal related losses
-        if "temporal" in self.train_mode:
+        if not self.config.train_mode.temporal == TemporalMetric.NONE:
+            logging.debug("enter temporal metric block.")
             speed_rank_index = torch.argsort(speed, descending=True).tolist()
             speed_loss = torch.tensor(0.0, device=x.device)
 
-            if self.train_mode.temporal == "ranking":
+            if self.config.train_mode.temporal == TemporalMetric.RANK:
+                logging.debug("perform temporal metric ranking.")
                 rank_logits = (video_features @ self.ranking_transform_param).squeeze()
                 rank_losses = []
 
@@ -709,7 +818,8 @@ class Detector(nn.Module):
 
                 other_losses["speed/rank"] = speed_loss
 
-            elif self.train_mode.temporal == "triplet":
+            elif self.config.train_mode.temporal == TemporalMetric.TRIPLET:
+                logging.debug("perform temporal triplet metric learning.")
                 margin_rounds = min(comb(b, 3), 10)
 
                 indices = list(range(b))
@@ -745,22 +855,22 @@ class Detector(nn.Module):
 
     def configure_optimizers(self, lr):
         params = [i for i in self.parameters() if i.requires_grad]
-        if (self.optimizer == "sgd"):
+        if (self.config.optimizer == Optimizers.SGD):
             return torch.optim.SGD(
                 params=params,
                 lr=lr,
-                weight_decay=self.weight_decay,
+                weight_decay=self.config.weight_decay,
                 momentum=0.95
             )
-        elif (self.optimizer == "adamw"):
+        elif (self.config.optimizer == Optimizers.ADAMW):
             return torch.optim.AdamW(
                 params=params,
                 lr=lr,
-                weight_decay=self.weight_decay
+                weight_decay=self.config.weight_decay
             )
 
     def _transform(self, n_px):
-        if (self.config.foundation == "clip"):
+        if (self.config.foundation == Foundations.CLIP):
             """
             Ported from:
             https://github.com/openai/CLIP/blob/d50d76daa670286dd6cacf3bcd80b5e4823fc8e1/clip/clip.py#L79
@@ -772,7 +882,7 @@ class Detector(nn.Module):
                 T.Normalize((0.48145466, 0.4578275, 0.40821073),
                             (0.26862954, 0.26130258, 0.27577711)),
             ])
-        elif (self.config.foundation == "dinov2"):
+        elif (self.config.foundation == Foundations.DINO2):
             return T.Compose([
                 T.Resize(n_px, interpolation=T.InterpolationMode.BICUBIC),
                 T.CenterCrop(n_px),
@@ -791,8 +901,7 @@ class Detector(nn.Module):
             self.encoder.eval()
         return self
 
-
-class CompInvAdapter(nn.Module):
+class Adaptor(nn.Module):
     def __init__(self, config, detector, num_frames=50):
         super().__init__()
         width = detector.encoder.width
@@ -903,12 +1012,10 @@ class CompInvAdapter(nn.Module):
                         _name,
                         torch.nn.Sequential(
                             torch.nn.Linear(width, inner_dim, bias=False),
-                            # torch.nn.LayerNorm((num_frames, 196, inner_dim)),
                             torch.nn.GELU(),
                             torch.nn.Dropout(config.dropout / 5),
 
                             torch.nn.Linear(inner_dim, inner_dim, bias=False),
-                            # torch.nn.LayerNorm((num_frames, 196, inner_dim)),
                             torch.nn.GELU(),
                             torch.nn.Dropout(config.dropout / 5),
 
@@ -950,122 +1057,3 @@ class CompInvAdapter(nn.Module):
                 else:
                     kvs[i][k] = features
         return kvs
-
-
-class CompInvEncoder(nn.Module):
-    """
-    Deepfake video detector (also a video classifier)
-
-    A series of video frames are first fed into CLIP image encoder
-    we export key and values for each frame in each layer of CLIP ViT
-    these k, v then further flatten on the temporal dimension
-    resulting in a series of tokens for each video.
-
-    The decoder aggregates the exported key and values in an attention manner 
-    a CLS query token is learned during decoding.
-    """
-    @staticmethod
-    def get_default_config():
-        C = CN()
-        C.name = "CompInvEncoder"
-        C.architecture = 'ViT-B/16'
-        C.decode_mode = "stride"
-        C.decode_stride = 2
-        C.decode_indices = []
-        C.adapter = CN(new_allowed=True)
-        C.dropout = 0.0
-        C.mode = 0
-        return C
-
-    def __init__(self, config, accelerator, num_frames=50, *args, **kargs):
-        super().__init__()
-        assert config.decode_mode in ["stride", "index"]
-
-        with accelerator.main_process_first():
-            self.encoder = disable_gradients(clip.load(config.architecture)[0].visual.float())
-
-        self.decode_mode = config.decode_mode
-
-        if (self.decode_mode == "stride"):
-            self.layer_indices = list(range(0, len(self.encoder.transformer.resblocks), config.decode_stride))
-        elif (self.decode_mode == "index"):
-            self.layer_indices = config.decode_indices
-        else:
-            raise Exception(f"Unknown decode type: {self.decode_type}")
-
-        self.mode = int(config.mode)
-
-        self.adapter = CompInvAdapter(config, self, num_frames=num_frames)
-        self.transform = self._transform(self.encoder.input_resolution)
-
-    def predict(self, x):
-        b, t, c, h, w = x.shape
-        with torch.no_grad():
-            # get key and value from each CLIP ViT layer
-            _kvs = self.encoder(x.flatten(0, 1))
-            # discard original CLS token and restore temporal dimension
-            _kvs = [{k: v[:, 1:].unflatten(0, (b, t)) for k, v in kv.items()} for kv in _kvs]
-            _kvs = [_kvs[i] for i in self.layer_indices]
-
-        kvs = self.adapter(_kvs)
-
-        return kvs, _kvs
-
-    def forward(self, x, comp, *args, **kargs):
-
-        kvs, _kvs = self.predict(x)
-
-        _l = len(self.layer_indices)
-
-        _b, _t, _p, _h, _d = kvs[0]['k'].shape
-
-        _w = _b // 2
-
-        device = kvs[0]['k'].device
-
-        recon_loss = torch.tensor(0.0, device=device)
-        match_loss = torch.tensor(0.0, device=device)
-
-        recon_diff = torch.zeros((_t, _p, _h, _d), device=device)
-        match_diff = torch.zeros((_t, _p, _h, _d), device=device)
-
-        for i in range(_w):
-
-            if (comp[i * 2] == "raw"):
-                raw_sup = i * 2
-                c23_sup = i * 2 + 1
-            else:
-                raw_sup = i * 2 + 1
-                c23_sup = i * 2
-
-            for layer in range(_l):
-                for subject in ["k", "v"]:
-                    if (self.mode == 0):
-                        recon_diff += torch.abs(_kvs[layer][subject][raw_sup] - kvs[layer][subject][raw_sup])
-                        match_diff += torch.abs(kvs[layer][subject][raw_sup] - kvs[layer][subject][c23_sup])
-                    elif (self.mode == 1):
-                        match_diff += torch.abs(_kvs[layer][subject][raw_sup] - kvs[layer][subject][c23_sup])
-
-        recon_loss = torch.norm((recon_diff / (_w * _l * 2)).view((_p, _t, -1)).mean(dim=1)) / _p
-        match_loss = torch.norm((match_diff / (_w * _l * 2)).view((_p, _t, -1)).mean(dim=1)) / _p
-
-        return recon_loss, match_loss
-
-    def configure_optimizers(self, lr):
-        return torch.optim.AdamW(
-            params=self.adapter.parameters(),
-            lr=lr
-        )
-
-    def _transform(self, n_px):
-        """
-        Ported from:
-        https://github.com/openai/CLIP/blob/d50d76daa670286dd6cacf3bcd80b5e4823fc8e1/clip/clip.py#L79
-        """
-        return T.Compose([
-            T.Resize(n_px, interpolation=T.InterpolationMode.BICUBIC),
-            T.CenterCrop(n_px),
-            T.ConvertImageDtype(torch.float32),
-            T.Normalize((0.48145466, 0.4578275, 0.40821073),
-                        (0.26862954, 0.26130258, 0.27577711)),
-        ])

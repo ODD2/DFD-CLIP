@@ -12,10 +12,10 @@ import numpy as np
 from accelerate import Accelerator, DistributedDataParallelKwargs
 from yacs.config import CfgNode as CN
 
-from src.models import Detector, CompInvEncoder
+from src.models import Detector
 from src.datasets import RPPG, FFPP, DFDC, CDF
-from src.trainer import Trainer, CompInvTrainer
-from src.evaluator import Evaluator, CompInvEvaluator
+from src.trainer import Trainer
+from src.evaluator import Evaluator
 from src.callbacks.timer import start_timer, end_timer
 from src.callbacks.metrics import init_metrics, update_metrics, compute_metrics
 from src.callbacks.tracking import update_trackers, cache_best_model
@@ -101,7 +101,9 @@ def get_config(params):
         C.tracking.directory = 'logs'
         C.tracking.project_name = "test"
 
-    C.freeze()
+    if params.debug:
+        C.trainer.num_workers = 0
+        C.trainer.batch_size = 1
 
     # some sanity check
     for d_eval in C.data.eval:
@@ -149,11 +151,11 @@ def register_trainer_callbacks(config, trainer, **kwargs):
 
     # stdout logger
     trainer.add_callback('on_batch_end',
-                         lambda trainer: trainer.accelerator.print(f'{trainer.steps} | loss {trainer.batch_loss_info}, {trainer.batch_duration:.2f}s'))
+                         lambda trainer: logging.info(f'{trainer.steps} | loss {trainer.batch_loss_info}, {trainer.batch_duration:.2f}s'))
     trainer.add_callback('on_epoch_end',
-                         lambda trainer: trainer.accelerator.print(f'epoch takes {trainer.epoch_duration:.2f}s'))
+                         lambda trainer: logging.info(f'epoch takes {trainer.epoch_duration:.2f}s'))
     trainer.add_callback('on_training_end',
-                         lambda trainer: trainer.accelerator.print(f'training completed in {timedelta(seconds=trainer.training_duration)}'))
+                         lambda trainer: logging.info(f'training completed in {timedelta(seconds=trainer.training_duration)}'))
 
     # evaluator
     trainer.add_callback('on_batch_end', evaluation_proxy, evaluation_interval=config.system.evaluation_interval)
@@ -166,7 +168,7 @@ def register_evaluator_callbacks(config, evaluator, **kwargs):
     # timer
     timer_events = ['evaluation', 'dataloader']
     evaluator.add_callback('on_evaluation_start', lambda _: None, timer={evt: 0 for evt in timer_events})
-    evaluator.add_callback('on_evaluation_start', lambda evaluator: evaluator.accelerator.print('evaluation start'))
+    evaluator.add_callback('on_evaluation_start', lambda evaluator: logging.info('evaluation start'))
     for event in timer_events:
         evaluator.add_callback(f'on_{event}_start', start_timer)
         evaluator.add_callback(f'on_{event}_end', end_timer)
@@ -190,13 +192,13 @@ def register_evaluator_callbacks(config, evaluator, **kwargs):
 
     # stdout logger
     evaluator.add_callback('on_batch_end',
-                           lambda evaluator: evaluator.accelerator.print(
+                           lambda evaluator: logging.info(
                                f'{evaluator.steps}.{evaluator.batch_num} | loss {evaluator.batch_loss_info}')
                            )
 
     evaluator.add_callback(
         'on_evaluation_end',
-        lambda evaluator: evaluator.accelerator.print(f'evaluation completed in {evaluator.evaluation_duration:.2f}')
+        lambda evaluator: logging.info(f'evaluation completed in {evaluator.evaluation_duration:.2f}')
     )
 
 
@@ -206,7 +208,7 @@ def main(params):
 
     # initialize accelerator and trackers (if enabled)
     accelerator = init_accelerator(config)
-    accelerator.print(config.dump())
+    logging.info(config.dump())
 
     # set random seed for deterministic training
     if config.system.deterministic_training:
@@ -216,16 +218,14 @@ def main(params):
     model = globals()[config.model.name](config.model, accelerator=accelerator, num_frames=config.data.num_frames, )
 
     # watch models
-    wandb.watch(model,log="gradients",log_freq=100)
+    wandb.watch(model, log="all", log_freq=100)
 
     # category to task index mapping
     category_index = {
         cat: i for i, cat in enumerate(set([cfg.category for cfg in config.data.train]))
     }
 
-    accelerator.print(f"Task Indices:")
-    for k, v in category_index.items():
-        accelerator.print(f"\t- {k} => {v}")
+    logging.info(f"Task Indices:{category_index}")
 
     # initialize datasets
     train_datasets = [
@@ -241,8 +241,9 @@ def main(params):
     ]
 
     for dataset in train_datasets:
-        accelerator.print(
-            f'Training Dataset {dataset.__class__.__name__.upper()} initialized with {len(dataset)} samples\n')
+       logging.info(
+            f'Training Dataset {dataset.__class__.__name__.upper()} initialized with {len(dataset)} samples.'
+        )
 
     eval_datasets = [
         globals()[cfg.name](
@@ -257,8 +258,8 @@ def main(params):
     ]
 
     for dataset in eval_datasets:
-        accelerator.print(
-            f'Evaluation Dataset {dataset.__class__.__name__.upper()} initialized with {len(dataset)} samples\n'
+        logging.info(
+            f'Evaluation Dataset {dataset.__class__.__name__.upper()} initialized with {len(dataset)} samples.'
         )
 
     # initialize trainer and evaluator
@@ -356,7 +357,7 @@ if __name__ == "__main__":
 
     if (not params.debug):
         import warnings
-        logging.basicConfig(level="INFO",format=logging_fmt)
+        logging.basicConfig(level="INFO", format=logging_fmt)
         warnings.filterwarnings(action="ignore")
         # disable warnings from the xformers efficient attention module due to torch.user_deterministic_algorithms(True,warn_only=True)
         warnings.filterwarnings(
@@ -365,7 +366,6 @@ if __name__ == "__main__":
             category=UserWarning
         )
     else:
-
-        logging.basicConfig(level="DEBUG",format=logging_fmt)
+        logging.basicConfig(level="DEBUG", format=logging_fmt)
 
     main(params)

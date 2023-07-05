@@ -236,26 +236,70 @@ class FFPP(Dataset):
         C.compressions = ['raw']
         C.name = "FFPP"
         C.scale = 1.0
-        C.pack = 0
-        C.pair = 0
-        C.contrast = 0
-        C.ssl_fake = 0
-        C.contrast_pair = 0
+        C.pack = False
+        C.pair = False
+        C.contrast = False
+        C.ssl_fake = False
+        C.contrast_pair = False
         C.augmentation = "none"
-        C.random_speed = 1
+        C.random_speed = True
         return C
 
+    @staticmethod
+    def validate_config(config):
+        config = config.clone()
+        assert type(config.category) == str
+        assert len(config.category) > 0
+
+        assert type(config.root_dir) == str
+        assert len(config.root_dir) > 0
+
+        assert type(config.vid_ext) == str
+        assert len(config.vid_ext) > 0
+
+        assert type(config.detection_level) == str
+        assert len(config.detection_level) > 0
+
+        assert type(config.types) == list
+        assert len(config.types) > 0
+
+        assert type(config.compressions) == list
+        assert len(config.compressions) > 0
+
+        assert type(config.scale) == float
+        assert 0 < config.scale <= 1
+
+        assert type(config.pack) == bool
+
+        assert type(config.pair) == bool
+
+        assert type(config.contrast) == bool
+
+        assert type(config.ssl_fake) == bool
+
+        assert type(config.contrast_pair) == bool
+
+        assert not (config.pack and config.pair)
+        assert not (config.pack and config.contrast)
+        assert not ((not config.contrast) and config.ssl_fake)
+        assert not ((not config.contrast) and config.contrast_pair)
+
+        assert type(config.augmentation) == str
+        config.augmentation = config.augmentation.split('+')
+        assert not ("none" in config.augmentation and len(config.augmentation) > 1)
+
+        assert type(config.random_speed) == bool
+
+        return config
+
+
     def __init__(self, config, num_frames, clip_duration, transform=None, accelerator=None, split='train', index=0):
-        assert 0 <= config.scale <= 1
         self.TYPE_DIRS = {
             'REAL': 'real/',
-            # 'DFD' : 'data/original_sequences/actors/',
             'DF': 'DF/',
             'FS': 'FS/',
             'F2F': 'F2F/',
-            'NT': 'NT/',
-            # 'FSH' : 'data/manipulated_sequences/FaceShifter/',
-            # 'DFD-FAKE' : 'data/manipulated_sequences/DeepFakeDetection/',
+            'NT': 'NT/'
         }
         self.category = config.category.lower()
         self.name = config.name.lower()
@@ -288,14 +332,13 @@ class FFPP(Dataset):
         self._build_video_table(accelerator)
         self._build_video_list(accelerator)
 
-        if config.augmentation == "none":
+        if  "none" in config.augmentation:
             def driver(x, replay={}):
                 return x, replay
             self.augmentation = driver
         else:
             self.frame_augmentation = None
             self.sequence_augmentation = None
-            config.augmentation = config.augmentation.split('+')
 
             if "dev-mode" in config.augmentation:
                 if "force-rgb" in config.augmentation:
@@ -424,60 +467,61 @@ class FFPP(Dataset):
             self.ssl_transform = driver
 
     def _build_video_table(self, accelerator):
-        self.video_table = {}
+        with accelerator.main_process_first():
+            self.video_table = {}
 
-        progress_bar = tqdm(self.types, disable=not accelerator.is_local_main_process)
-        for df_type in progress_bar:
-            self.video_table[df_type] = {}
-            for comp in self.compressions:
-                # description
-                progress_bar.set_description(f"{df_type}: {comp}/videos")
+            progress_bar = tqdm(self.types, disable=not accelerator.is_local_main_process)
+            for df_type in progress_bar:
+                self.video_table[df_type] = {}
+                for comp in self.compressions:
+                    # description
+                    progress_bar.set_description(f"{df_type}: {comp}/videos")
 
-                video_cache = path.expanduser(
-                    f'./.cache/dfd-clip/videos/{self.__class__.__name__}-{df_type}-{comp}.pkl'
-                )
-                video_metas = {}
-                if path.isfile(video_cache):
-                    with open(video_cache, 'rb') as f:
-                        video_metas = pickle.load(f)
-                else:
-                    # subdir
-                    subdir = path.join(self.root, self.TYPE_DIRS[df_type], f'{comp}/videos')
+                    video_cache = path.expanduser(
+                        f'./.cache/dfd-clip/videos/{self.__class__.__name__}-{df_type}-{comp}.pkl'
+                    )
+                    video_metas = {}
+                    if path.isfile(video_cache):
+                        with open(video_cache, 'rb') as f:
+                            video_metas = pickle.load(f)
+                    else:
+                        # subdir
+                        subdir = path.join(self.root, self.TYPE_DIRS[df_type], f'{comp}/videos')
 
-                    # video table
-                    for f in scandir(subdir):
-                        if self.vid_ext in f.name:
-                            vid_reader = torchvision.io.VideoReader(
-                                f.path,
-                                "video"
-                            )
-                            try:
-                                fps = vid_reader.get_metadata()["video"]["fps"][0]
-                                duration = vid_reader.get_metadata()["video"]["duration"][0]
-                                video_metas[f.name[:-len(self.vid_ext)]] = {
-                                    "fps": fps,
-                                    "frames": round(duration * fps),
-                                    "duration": duration,
-                                    "path": f.path[len(self.root):-len(self.vid_ext)]
-                                }
-                            except:
-                                print(f"Error Occur During Video Table Creation: {f.path}")
-                            del vid_reader
+                        # video table
+                        for f in scandir(subdir):
+                            if self.vid_ext in f.name:
+                                vid_reader = torchvision.io.VideoReader(
+                                    f.path,
+                                    "video"
+                                )
+                                try:
+                                    fps = vid_reader.get_metadata()["video"]["fps"][0]
+                                    duration = vid_reader.get_metadata()["video"]["duration"][0]
+                                    video_metas[f.name[:-len(self.vid_ext)]] = {
+                                        "fps": fps,
+                                        "frames": round(duration * fps),
+                                        "duration": duration,
+                                        "path": f.path[len(self.root):-len(self.vid_ext)]
+                                    }
+                                except:
+                                    logging.error(f"Error Occur During Video Table Creation: {f.path}")
+                                del vid_reader
 
-                    # caching
-                    if accelerator.is_local_main_process:
-                        makedirs(path.dirname(video_cache), exist_ok=True)
-                        with open(video_cache, 'wb') as f:
-                            pickle.dump(video_metas, f)
+                        # caching
+                        if accelerator.is_local_main_process:
+                            makedirs(path.dirname(video_cache), exist_ok=True)
+                            with open(video_cache, 'wb') as f:
+                                pickle.dump(video_metas, f)
 
-                # post process the video path
-                for idx in video_metas:
-                    video_metas[idx]["path"] = os.path.join(self.root, video_metas[idx]["path"]) + self.vid_ext
+                    # post process the video path
+                    for idx in video_metas:
+                        video_metas[idx]["path"] = os.path.join(self.root, video_metas[idx]["path"]) + self.vid_ext
 
-                # store in video table.
-                self.video_table[df_type][comp] = video_metas
+                    # store in video table.
+                    self.video_table[df_type][comp] = video_metas
 
-    def _build_video_list(self, accelerator):
+    def _build_video_list(self,accelerator):
         self.video_list = []
 
         with open(path.join(self.root, 'splits', f'{self.split}.json')) as f:
@@ -499,8 +543,8 @@ class FFPP(Dataset):
                         if (clips > 0):
                             comp_videos.append((df_type, comp, idx, clips))
                     else:
-                        accelerator.print(
-                            f'Warning: video {path.join(self.root, self.TYPE_DIRS[df_type], comp, "videos", idx)} does not present in the processed dataset.'
+                        logging.warn(
+                            f'Video {path.join(self.root, self.TYPE_DIRS[df_type], comp, "videos", idx)} does not present in the processed dataset.'
                         )
                         self.stray_videos[idx] = (0 if df_type == "REAL" else 1)
                 self.video_list += comp_videos[:int(self.scale * len(comp_videos))]
@@ -1046,7 +1090,7 @@ class CDF(Dataset):
         C.vid_ext = ".avi"
         C.name = "CDF"
         C.scale = 1.0
-        C.pack = 0
+        C.pack = False
         return C
 
     def __init__(self, config, num_frames, clip_duration, transform=None, accelerator=None, split="test", index=0, *args, **kwargs):
@@ -1080,55 +1124,57 @@ class CDF(Dataset):
         self._build_video_list(accelerator)
 
     def _build_video_table(self, accelerator):
-        self.video_table = {}
+        with accelerator.main_process_first():
+            self.video_table = {}
 
-        progress_bar = tqdm(["REAL", "FAKE"], disable=not accelerator.is_local_main_process)
+            progress_bar = tqdm(["REAL", "FAKE"], disable=not accelerator.is_local_main_process)
 
-        for label in progress_bar:
-            # description
-            progress_bar.set_description(f"{label}/videos")
+            for label in progress_bar:
+                # description
+                progress_bar.set_description(f"{label}/videos")
 
-            self.video_table[label] = {}
-            video_cache = path.expanduser(f'./.cache/dfd-clip/videos/{self.__class__.__name__}-{label}.pkl')
-            video_metas = {}
-
-            if path.isfile(video_cache):
-                with open(video_cache, 'rb') as f:
-                    video_metas = pickle.load(f)
-            else:
-                # subdir
-                subdir = path.join(self.root, label, 'videos')
+                self.video_table[label] = {}
+                video_cache = path.expanduser(f'./.cache/dfd-clip/videos/{self.__class__.__name__}-{label}.pkl')
                 video_metas = {}
-                # video table
-                for f in scandir(subdir):
-                    if self.vid_ext in f.name:
-                        vid_reader = torchvision.io.VideoReader(
-                            f.path,
-                            "video"
-                        )
-                        try:
-                            fps = vid_reader.get_metadata()["video"]["fps"][0]
-                            duration = vid_reader.get_metadata()["video"]["duration"][0]
-                            video_metas[f.name[:-len(self.vid_ext)]] = {
-                                "fps": fps,
-                                "frames": round(duration * fps),
-                                "duration": duration,
-                                "path": f.path[len(self.root):-len(self.vid_ext)]
-                            }
-                        except:
-                            print(f"Error Occur During Video Table Creation: {f.path}")
-                        del vid_reader
-                # caching
-                if accelerator.is_local_main_process:
-                    makedirs(path.dirname(video_cache), exist_ok=True)
-                    with open(video_cache, 'wb') as f:
-                        pickle.dump(video_metas, f)
 
-            # post process the video path
-            for idx in video_metas:
-                video_metas[idx]["path"] = os.path.join(self.root, video_metas[idx]["path"]) + self.vid_ext
+                if path.isfile(video_cache):
+                    with open(video_cache, 'rb') as f:
+                        video_metas = pickle.load(f)
+                else:
+                    # subdir
+                    subdir = path.join(self.root, label, 'videos')
+                    video_metas = {}
+                    # video table
+                    for f in scandir(subdir):
+                        if self.vid_ext in f.name:
+                            vid_reader = torchvision.io.VideoReader(
+                                f.path,
+                                "video"
+                            )
+                            try:
+                                fps = vid_reader.get_metadata()["video"]["fps"][0]
+                                duration = vid_reader.get_metadata()["video"]["duration"][0]
+                                video_metas[f.name[:-len(self.vid_ext)]] = {
+                                    "fps": fps,
+                                    "frames": round(duration * fps),
+                                    "duration": duration,
+                                    "path": f.path[len(self.root):-len(self.vid_ext)]
+                                }
+                            except:
+                                logging.error(f"Error Occur During Video Table Creation: {f.path}")
+                            del vid_reader
+                    
+                    # caching
+                    if accelerator.is_local_main_process:
+                        makedirs(path.dirname(video_cache), exist_ok=True)
+                        with open(video_cache, 'wb') as f:
+                            pickle.dump(video_metas, f)
 
-            self.video_table[label] = video_metas
+                # post process the video path
+                for idx in video_metas:
+                    video_metas[idx]["path"] = os.path.join(self.root, video_metas[idx]["path"]) + self.vid_ext
+
+                self.video_table[label] = video_metas
 
     def _build_video_list(self, accelerator):
         self.video_list = []
@@ -1149,8 +1195,8 @@ class CDF(Dataset):
                     if (clips > 0):
                         _videos.append((label.upper(), name, clips))
                 else:
-                    accelerator.print(
-                        f'Warning: video {path.join(self.root, label, "videos", name)} does not present in the processed dataset.'
+                    logging.warn(
+                        f'Video {path.join(self.root, label, "videos", name)} does not present in the processed dataset.'
                     )
                     self.stray_videos[filename] = (0 if label == "REAL" else 1)
             self.video_list += _videos[:int(self.scale * len(_videos))]
@@ -1266,7 +1312,7 @@ class DFDC(Dataset):
         C.vid_ext = ".avi"
         C.name = "DFDC"
         C.scale = 1.0
-        C.pack = 0
+        C.pack = False
         return C
 
     def __init__(self, config, num_frames, clip_duration, transform=None, accelerator=None, split="test", index=0, *args, **kwargs):
@@ -1300,50 +1346,51 @@ class DFDC(Dataset):
         self._build_video_list(accelerator)
 
     def _build_video_table(self, accelerator):
-        self.video_table = {}
-
-        video_cache = path.expanduser(f'./.cache/dfd-clip/videos/{self.__class__.__name__}.pkl')
-        video_metas = {}
-        if path.isfile(video_cache):
-            with open(video_cache, 'rb') as f:
-                video_metas = pickle.load(f)
-        else:
-            # subdir
-            subdir = path.join(self.root, 'videos')
-
+        with accelerator.main_process_first():
+            self.video_table = {}
+            video_cache = path.expanduser(f'./.cache/dfd-clip/videos/{self.__class__.__name__}.pkl')
             video_metas = {}
 
-            # video table
-            for f in scandir(subdir):
-                if self.vid_ext in f.name:
-                    vid_reader = torchvision.io.VideoReader(
-                        f.path,
-                        "video"
-                    )
-                    try:
-                        fps = vid_reader.get_metadata()["video"]["fps"][0]
-                        duration = vid_reader.get_metadata()["video"]["duration"][0]
-                        video_metas[f.name[:-len(self.vid_ext)]] = {
-                            "fps": fps,
-                            "frames": round(duration * fps),
-                            "duration": duration,
-                            "path": f.path[len(self.root):-len(self.vid_ext)]
-                        }
-                    except:
-                        print(f"Error Occur During Video Table Creation: {f.path}")
-                    del vid_reader
+            if path.isfile(video_cache):
+                with open(video_cache, 'rb') as f:
+                    video_metas = pickle.load(f)
+            else:
+                # subdir
+                subdir = path.join(self.root, 'videos')
 
-            # caching
-            if accelerator.is_local_main_process:
-                makedirs(path.dirname(video_cache), exist_ok=True)
-                with open(video_cache, 'wb') as f:
-                    pickle.dump(video_metas, f)
+                video_metas = {}
 
-         # post process the video path
-        for idx in video_metas:
-            video_metas[idx]["path"] = os.path.join(self.root, video_metas[idx]["path"]) + self.vid_ext
+                # video table
+                for f in scandir(subdir):
+                    if self.vid_ext in f.name:
+                        vid_reader = torchvision.io.VideoReader(
+                            f.path,
+                            "video"
+                        )
+                        try:
+                            fps = vid_reader.get_metadata()["video"]["fps"][0]
+                            duration = vid_reader.get_metadata()["video"]["duration"][0]
+                            video_metas[f.name[:-len(self.vid_ext)]] = {
+                                "fps": fps,
+                                "frames": round(duration * fps),
+                                "duration": duration,
+                                "path": f.path[len(self.root):-len(self.vid_ext)]
+                            }
+                        except:
+                            logging.error(f"Error Occur During Video Table Creation: {f.path}")
+                        del vid_reader
+                
+                # caching
+                if accelerator.is_local_main_process:
+                    makedirs(path.dirname(video_cache), exist_ok=True)
+                    with open(video_cache, 'wb') as f:
+                        pickle.dump(video_metas, f)
 
-        self.video_table = video_metas
+            # post process the video path
+            for idx in video_metas:
+                video_metas[idx]["path"] = os.path.join(self.root, video_metas[idx]["path"]) + self.vid_ext
+
+            self.video_table = video_metas
 
     def _build_video_list(self, accelerator):
         self.video_list = []
@@ -1366,8 +1413,8 @@ class DFDC(Dataset):
                 if (clips > 0):
                     _videos.append((label, name, clips))
             else:
-                accelerator.print(
-                    f'Warning: video {path.join(self.root, label, "videos", name)} does not present in the processed dataset.'
+                logging.warn(
+                    f'Video {path.join(self.root, label, "videos", name)} does not present in the processed dataset.'
                 )
                 self.stray_videos[filename] = (0 if label == "REAL" else 1)
 
