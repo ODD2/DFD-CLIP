@@ -90,9 +90,9 @@ class Evaluator(_Evaluator):
                     single_task=task_index
                 )
                 # cache several stats
-                self.batch_losses[name] = task_losses[task_index].detach()
-                self.batch_logits[name] = task_logits[task_index].detach()
-                self.batch_labels[name] = batch[1][task_index].detach()
+                self.batch_losses[name] = task_losses[task_index].detach().cpu()
+                self.batch_logits[name] = task_logits[task_index].detach().cpu()
+                self.batch_labels[name] = batch[1][task_index].detach().cpu()
 
                 self.batch_num += 1
                 self.batch_loss_info = ",".join(

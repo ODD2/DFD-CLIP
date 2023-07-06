@@ -43,6 +43,9 @@ class Trainer(_Trainer):
         C.mode.teach_at = -1
         C.mode.teach_ema = -1
 
+        # batch per steps
+        C.batch_accum = 1
+
         # learning rate scheduler
         C.lr_scheduler = LRScheduler.ONECYCLE.name.lower()
         return C
@@ -70,6 +73,9 @@ class Trainer(_Trainer):
 
             assert type(config.mode.teach_ema) == float
             assert 0 < config.mode.teach_ema <= 1
+
+        assert type(config.batch_accum) == int
+        assert config.batch_accum >= 1
 
         config.lr_scheduler = int(LRScheduler[config.lr_scheduler.upper()])
 
@@ -115,6 +121,7 @@ class Trainer(_Trainer):
             self.model, self.optimizer, self.lr_scheduler, self.teacher = self.accelerator.prepare(
                 self.model, self.optimizer, self.lr_scheduler, self.teacher
             )
+        
         else:
             self.model, self.optimizer, self.lr_scheduler = self.accelerator.prepare(
                 self.model, self.optimizer, self.lr_scheduler
@@ -158,84 +165,91 @@ class Trainer(_Trainer):
             # initiliazation
             self.model.zero_grad(set_to_none=True)
             self.model.train()
-            self.batch_losses = {}
-            self.batch_logits = {}
-            self.batch_labels = {}
+            self.batch_losses = {name: torch.tensor([]) for name in  dataset_iterators.keys()}
+            self.batch_logits = {name: torch.tensor([]) for name in  dataset_iterators.keys()}
+            self.batch_labels = {name: torch.tensor([]) for name in  dataset_iterators.keys()}
 
             # forward pass for batches from each datasets
-            for name in dataset_iterators.keys():
-                try:
-                    batch = next(dataset_iterators[name])
-                except StopIteration:
-                    dataset_iterators[name] = iter(self.dataloaders[name])
-                    batch = next(dataset_iterators[name])
+            for _ in range(self.config.batch_accum):
+                with self.accelerator.accumulate(self.model):
 
-                # cache the index of source task.
-                task_index = batch[-1][0]
+                    # iterate over all datasets.
+                    for name in dataset_iterators.keys():
+                        try:
+                            batch = next(dataset_iterators[name])
+                        except StopIteration:
+                            dataset_iterators[name] = iter(self.dataloaders[name])
+                            batch = next(dataset_iterators[name])
 
-                # prepare labels and flags according to training mode.
-                if (self.config.mode.type == TrainMode.TEACHER and self.teaching):
-                    with torch.no_grad():
-                        # pseudo labels from EMA teacher
-                        _, teacher_logits = self.teacher(batch[0], [None] * self.total_tasks, batch[2], single_task=-1)
+                        # cache the index of source task.
+                        task_index = batch[-1][0]
 
-                    # ASSUMPTION: all labels are probabilities.
-                    # replace with true labels of the target task
-                    task_labels = [
-                        batch[1] if i == task_index else teacher_logits[i].softmax(dim=-1)
-                        for i in range(self.total_tasks)
-                    ]
+                        # prepare labels and flags according to training mode.
+                        if (self.config.mode.type == TrainMode.TEACHER and self.teaching):
+                            with torch.no_grad():
+                                # pseudo labels from EMA teacher
+                                _, teacher_logits = self.teacher(batch[0], [None] * self.total_tasks, batch[2], single_task=-1)
 
-                    # update the batch data
-                    batch[1] = task_labels
+                            # ASSUMPTION: all labels are probabilities.
+                            # replace with true labels of the target task
+                            task_labels = [
+                                batch[1] if i == task_index else teacher_logits[i].softmax(dim=-1)
+                                for i in range(self.total_tasks)
+                            ]
 
-                    single_task  = None
-                else:
-                    task_labels = [
-                        batch[1] if i == task_index else None
-                        for i in range(self.total_tasks)
-                    ]
+                            # update the batch data
+                            batch[1] = task_labels
 
-                    batch[1] = task_labels
+                            single_task  = None
+                        else:
+                            task_labels = [
+                                batch[1] if i == task_index else None
+                                for i in range(self.total_tasks)
+                            ]
 
-                    single_task = task_index
+                            batch[1] = task_labels
 
-                # forward and calculate the loss
-                task_losses, task_logits, other_losses = self.model(
-                    *batch[:5],
-                    train=True,
-                    single_task=single_task
-                )
+                            single_task = task_index
 
-                # backprop the losses
-                if (self.config.mode.type == TrainMode.TEACHER and self.teaching):
-                    self.accelerator.backward(
-                        sum([loss.mean() for loss in task_losses]) +
-                        sum([other_losses[lname].mean() for lname in other_losses.keys()])
-                    )
-                else:
-                    self.accelerator.backward(
-                        task_losses[task_index].mean() +
-                        sum([other_losses[lname].mean() for lname in other_losses.keys()])
-                    )
+                        # forward and calculate the loss
+                        task_losses, task_logits, other_losses = self.model(
+                            *batch[:5],
+                            train=True,
+                            single_task=single_task
+                        )
 
-                # cache output task artifacts
-                self.batch_losses[name] = task_losses[task_index].detach()
-                self.batch_logits[name] = task_logits[task_index].detach()
-                self.batch_labels[name] = batch[1][task_index].detach()
+                        # backprop the losses
+                        if (self.config.mode.type == TrainMode.TEACHER and self.teaching):
+                            self.accelerator.backward(
+                                sum([loss.mean() for loss in task_losses]) +
+                                sum([other_losses[lname].mean() for lname in other_losses.keys()])
+                            )
+                        else:
+                            self.accelerator.backward(
+                                task_losses[task_index].mean() +
+                                sum([other_losses[lname].mean() for lname in other_losses.keys()])
+                            )
 
-                # cache auxiliary losses
-                for _k, _v in other_losses.items():
-                    self.batch_losses[_k] = _v.detach().mean()
+                        # cache output task artifacts
+                        self.batch_losses[name] = torch.cat((self.batch_losses[name], task_losses[task_index].detach().cpu()))
+                        self.batch_logits[name] = torch.cat((self.batch_logits[name],task_logits[task_index].detach().cpu()))
+                        self.batch_labels[name] = torch.cat((self.batch_labels[name],batch[1][task_index].detach().cpu()))
 
-            # update parameter and learning rates.
-            self.optimizer.step()
-            self.lr_scheduler.step()
-            self.model.zero_grad(set_to_none=True)
+                        # cache auxiliary losses
+                        for _k in other_losses.keys():
+                            if(not _k in self.batch_losses ):
+                                self.batch_losses[name]=  torch.tensor([])
+                            self.batch_losses[_k] = torch.cat(self.batch_losses[_k], other_losses[_k].detach().cpu().mean())
 
-            
+                    # update parameter.
+                    self.optimizer.step()
+                    # update learning rate.
+                    self.lr_scheduler.step()
+                    # clear gradient after optimizer step
+                    self.model.zero_grad(set_to_none=True)
             # accumulate steps
             self.steps += 1
+
 
             # update the teacher's parameters under the ema method.
             if (self.config.mode.type == TrainMode.TEACHER):

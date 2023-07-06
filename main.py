@@ -11,6 +11,7 @@ import torch
 import numpy as np
 from accelerate import Accelerator, DistributedDataParallelKwargs
 from yacs.config import CfgNode as CN
+from accelerate.utils import GradientAccumulationPlugin
 
 from src.models import Detector
 from src.datasets import RPPG, FFPP, DFDC, CDF
@@ -288,6 +289,7 @@ def init_accelerator(config):
     accelerate_kwargs_handlers = [DistributedDataParallelKwargs(find_unused_parameters=True)]
     accelerator = Accelerator(
         mixed_precision=config.system.mixed_precision,
+        gradient_accumulation_steps=config.trainer.batch_accum,
         kwargs_handlers=accelerate_kwargs_handlers
     )
 
