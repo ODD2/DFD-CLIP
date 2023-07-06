@@ -31,8 +31,7 @@ def cache_best_model(agent):
 
         if getattr(builtins, agent.compare_fn)(main_metric, current_best) == main_metric:
             # update best
-            logging.info(f'best model updated with "{agent.main_metric}" of', main_metric,
-                                    f'(past SOTA: {current_best})')
+            logging.info(f'best model updated with "{agent.main_metric}" of {main_metric}(past SOTA: {current_best})')
             agent.best_main_metric = main_metric
             agent.best_model_state = agent.accelerator.unwrap_model(agent.model).state_dict()
             agent.best_model_state = {k: v.cpu() for k, v in agent.best_model_state.items()}
