@@ -13,28 +13,35 @@ from torch import nn
 from . import clip
 import torchvision.transforms as T
 
+
 class AttnMode(IntEnum):
     PATCH = auto()
     FRAME = auto()
     TEMPORAL = auto()
 
+
 class Foundations(IntEnum):
     CLIP = auto()
     DINO2 = auto()
+    FARL = auto()
+
 
 class DecodeMode(IntEnum):
     INDEX = auto()
     STRIDE = auto()
+
 
 class AdaptorMode(IntEnum):
     PRETRAIN = auto()
     NORMAL = auto()
     NONE = auto()
 
+
 class TemporalMetric(IntEnum):
     RANK = auto()
     TRIPLET = auto()
     NONE = auto()
+
 
 class PatchMaskMode(IntEnum):
     BATCH = auto()
@@ -42,17 +49,21 @@ class PatchMaskMode(IntEnum):
     GUIDE = auto()
     NONE = auto()
 
+
 class CompMetric(IntEnum):
-    FEATURE=auto()
-    SYNC=auto()
+    FEATURE = auto()
+    SYNC = auto()
     NONE = auto()
+
 
 class Optimizers(IntEnum):
     SGD = auto()
-    ADAMW= auto()
+    ADAMW = auto()
+
 
 class Object(object):
     pass
+
 
 def auc_roc(weight=None, label_smoothing=0.0, *args, **kargs):
     def driver(logits, y, _weight=weight, _label_smoothing=label_smoothing):
@@ -67,10 +78,12 @@ def auc_roc(weight=None, label_smoothing=0.0, *args, **kargs):
         )
     return driver
 
+
 def disable_gradients(module: nn.Module):
     for params in module.parameters():
         params.requires_grad = False
     return module
+
 
 class LayerNorm(nn.LayerNorm):
     """
@@ -84,6 +97,7 @@ class LayerNorm(nn.LayerNorm):
         ret = super().forward(x.type(torch.float32))
         return ret.type(orig_type)
 
+
 class QuickGELU(nn.Module):
     """
     Ported from:
@@ -92,6 +106,7 @@ class QuickGELU(nn.Module):
 
     def forward(self, x: torch.Tensor):
         return x * torch.sigmoid(1.702 * x)
+
 
 class MultiheadAttention(nn.Module):
     """
@@ -172,6 +187,7 @@ class MultiheadAttention(nn.Module):
 
         return self.out_proj(mix.flatten(-2))
 
+
 class ResidualAttentionBlock(nn.Module):
     """
     Modified from:
@@ -203,7 +219,7 @@ class ResidualAttentionBlock(nn.Module):
 
     def _apply_reference(self, config, block_index, layer_indices, reference_layers):
 
-        if config.foundation == Foundations.CLIP:
+        if config.foundation == Foundations.CLIP or config.foundation == Foundations.FARL:
             """
                 use CLIP weights to initialize decoder
             """
@@ -251,11 +267,12 @@ class ResidualAttentionBlock(nn.Module):
             else:
                 self.mlp.load_state_dict(fetch_mlp_params(current_layer))
         else:
-            logging.debug("perform noraml reference initialization.")
+            logging.debug("perform normal reference initialization.")
             current_layer = layer_indices[block_index]
             self.ln_1.load_state_dict(fetch_ln1_params(current_layer))
             self.mlp.load_state_dict(fetch_mlp_params(current_layer))
             self.ln_2.load_state_dict(fetch_ln2_params(current_layer))
+
 
 class Transformer(nn.Module):
     """
@@ -277,7 +294,7 @@ class Transformer(nn.Module):
             )
 
         # augmentive query
-        
+
         if config.op_mode.aug_query:
             self.augment_queries = []
             for i in range(len(layer_indices) - 1):
@@ -300,6 +317,7 @@ class Transformer(nn.Module):
                     x = x + self.augment_queries[i]
 
         return torch.cat(result, dim=1)
+
 
 class Decoder(nn.Module):
     """
@@ -399,6 +417,7 @@ class Decoder(nn.Module):
 
         return task_logits, video_feature
 
+
 class DINOv2(nn.Module):
     def __init__(self):
         super().__init__()
@@ -427,6 +446,7 @@ class DINOv2(nn.Module):
             for i in range(self.block_num)
         ]
         return ret
+
 
 class Detector(nn.Module):
     """
@@ -486,7 +506,6 @@ class Detector(nn.Module):
         C.train_mode.patch_mask.ratio = 1.0
         # > nerf losses from raw label samples
         C.train_mode.nerf_raw = -1.0
-        
 
         # operation mode configurations
         C.op_mode = CN()
@@ -517,7 +536,7 @@ class Detector(nn.Module):
         config = config.clone()
 
         config.foundation = int(Foundations[config.foundation.upper()])
-        
+
         config.decode_mode.type = int(DecodeMode[config.decode_mode.type.upper()])
         if config.decode_mode.type == DecodeMode.STRIDE:
             assert config.decode_mode.indices == int
@@ -533,11 +552,11 @@ class Detector(nn.Module):
         assert type(config.concat_ref) == bool
 
         config.adapter.type = int(AdaptorMode[config.adapter.type.upper()])
-        if(config.adapter.type==AdaptorMode.PRETRAIN):
-            assert type(config.adapter.path)== str 
+        if (config.adapter.type == AdaptorMode.PRETRAIN):
+            assert type(config.adapter.path) == str
             assert len(config.adapter.path) > 0
             assert type(config.adapter.frozen) == bool
-        
+
         config.train_mode.temporal = int(TemporalMetric[config.train_mode.temporal.upper()])
 
         config.train_mode.compression = int(CompMetric[config.train_mode.compression.upper()])
@@ -562,7 +581,7 @@ class Detector(nn.Module):
         assert type(config.op_mode.ema_frame) == float
         if config.op_mode.ema_frame > 0:
             assert 0 <= config.op_mode.ema_frame <= 1
-        
+
         assert type(config.dropout) == float
         assert 0 <= config.dropout <= 1
 
@@ -575,7 +594,7 @@ class Detector(nn.Module):
 
     def __init__(self, config, num_frames, accelerator):
         super().__init__()
-        config =  self.validate_config(config)
+        config = self.validate_config(config)
         self.config = config
 
         with accelerator.main_process_first():
@@ -583,7 +602,15 @@ class Detector(nn.Module):
                 self.encoder = disable_gradients(clip.load(config.architecture)[0].visual.float())
             elif config.foundation == Foundations.DINO2:
                 self.encoder = disable_gradients(DINOv2())
-        
+            elif config.foundation == Foundations.FARL:
+                _model = clip.load("ViT-B/16")[0]
+                _model.load_state_dict(
+                    torch.load("./misc/FaRL-Base-Patch16-LAIONFace20M-ep64.pth")["state_dict"],
+                    strict=False
+                )
+                self.encoder = _model.visual.float()
+                self.encoder = disable_gradients(self.encoder)
+
         self.losses = []
 
         for loss in config.losses:
@@ -595,7 +622,7 @@ class Detector(nn.Module):
         if (config.decode_mode.type == DecodeMode.STRIDE):
             self.layer_indices = list(range(0, len(self.encoder.transformer.resblocks), config.decode_mode.stride))
         elif (config.decode_mode.type == DecodeMode.INDEX):
-            self.layer_indices =  config.decode_mode.indices
+            self.layer_indices = config.decode_mode.indices
 
         self.decoder = Decoder(self, config, num_frames)
 
@@ -769,11 +796,11 @@ class Detector(nn.Module):
                     logging.debug("compute compression metric in sync mode.")
                     for layer in range(_l):
                         for subject in ["k", "v"]:
-                                match_loss += torch.nn.functional.kl_div(
-                                    torch.log_softmax(kvs[layer][subject][c23_i], dim=-1),
-                                    torch.log_softmax(kvs[layer][subject][raw_i], dim=-1),
-                                    log_target=True
-                                ) / (_w * _l * 2)
+                            match_loss += torch.nn.functional.kl_div(
+                                torch.log_softmax(kvs[layer][subject][c23_i], dim=-1),
+                                torch.log_softmax(kvs[layer][subject][raw_i], dim=-1),
+                                log_target=True
+                            ) / (_w * _l * 2)
 
             other_losses["recon"] = recon_loss
             other_losses["match"] = 100 * match_loss
@@ -870,7 +897,7 @@ class Detector(nn.Module):
             )
 
     def _transform(self, n_px):
-        if (self.config.foundation == Foundations.CLIP):
+        if (self.config.foundation == Foundations.CLIP or self.config.foundation == Foundations.FARL):
             """
             Ported from:
             https://github.com/openai/CLIP/blob/d50d76daa670286dd6cacf3bcd80b5e4823fc8e1/clip/clip.py#L79
@@ -900,6 +927,7 @@ class Detector(nn.Module):
         if (mode):
             self.encoder.eval()
         return self
+
 
 class Adaptor(nn.Module):
     def __init__(self, config, detector, num_frames=50):
