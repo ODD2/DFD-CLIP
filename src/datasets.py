@@ -1302,6 +1302,9 @@ class CDF(Dataset):
     def collate_fn(self, batch):
         return default_collate(batch)
 
+    def video_info(self, idx):
+        video_idx = next(i for i, x in enumerate(self.stack_video_clips) if idx < x)
+        return video_idx, *self.video_list[video_idx]
 
 class DFDC(Dataset):
     @staticmethod
@@ -1518,6 +1521,10 @@ class DFDC(Dataset):
                     raise e
                 else:
                     idx = random.randrange(0, len(self))
+
+    def video_info(self, idx):
+        video_idx = next(i for i, x in enumerate(self.stack_video_clips) if idx < x)
+        return video_idx, *self.video_list[video_idx]
 
     def collate_fn(self, batch):
         return default_collate(batch)

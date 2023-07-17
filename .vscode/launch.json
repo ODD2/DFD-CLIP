@@ -19,13 +19,14 @@
                 // "configs/deepfake/sgd(0.9m)-z0-pm-aq.yaml",
                 // "configs/deepfake/deepfake.yaml",
                 // "configs/deepfake/wgp.yaml",
-                "configs/deepfake/test.yaml",
+                "configs/deepfake/base-ga.yaml",
                 // "configs/deepfake/all.yaml",
                 // "configs/deepfake/0618/wgp+frame_attn+patch_mask-adapt.yaml",
                 // "configs/deepfake/2s(mode1):c23+resi+tune+dbal+5e-5.yaml",
                 // "/home/od/Desktop/repos/dfd-clip/configs/deepfake/2s(mode1):c23+resi+tune+dbal+5e-5+2s20f+reg_viral(hf,s,pfa).yaml",
                 // "configs/deepfake/2s(mode1):c23+resi+tune+dbal+5e-5+4s20f+reg_viral(hf,s,pfa)-e2e.yaml",
-                "--test"
+                "--test",
+                // "--debug"
             ],
             "justMyCode": false
         },
@@ -87,11 +88,15 @@
             "module": "preprocessing.extract_faces",
             "justMyCode": true,
             "args": [
-                "--root-dir=/home/od/Desktop/Dataset/CelebDF/Real",
-                "--glob-exp=*",
+                // "--root-dir=/home/od/Desktop/Dataset/CelebDF/Fake",
+                // "--glob-exp=*",
                 // "--root-dir=/stock/FaceForensicC23/",
                 // "--glob-exp=*/*",
-                "--save-folder=cropped_faces"
+                "--root-dir=/stock/DFDC/",
+                "--glob-exp=*",
+                "--crop-width=200",
+                "--crop-height=200",
+                "--save-folder=cropped_faces_200"
             ]
         },
         {

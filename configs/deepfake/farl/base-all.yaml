@@ -65,13 +65,14 @@ evaluator:
   name: Evaluator
   num_workers: 8
 model:
+  foundation: farl
   adapter:
-    # frozen: false
-    # struct:
-    #   type: 768-x-768-nln
-    #   x: 256
-    # type: normal
-    type: none
+    frozen: false
+    struct:
+      type: 768-x-768-nln
+      x: 256
+    type: normal
+    # type: none
   architecture: ViT-B/16
   decode_mode: 
     type: index
@@ -99,8 +100,7 @@ tracking:
   tool: wandb
 trainer:
   batch_size: 12
-  batch_accum: 5
-  learning_rate: 0.01
+  learning_rate: 0.003
   max_steps: 3000
   metrics:
   - name: deepfake/ffpp
@@ -110,5 +110,4 @@ trainer:
   mode:
     type: normal
   name: Trainer
-  # lr_scheduler: linear
   num_workers: 8
