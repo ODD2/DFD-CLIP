@@ -156,7 +156,7 @@ class MultiheadAttention(nn.Module):
             """
             norm = q.size(-1) ** 0.5
             aff = torch.einsum('nqhc,nkhc->nqkh', q / norm, k).tanh()
-            gate = -(q - k).abs().sum(-1).unsqueeze(1) / norm
+            gate = -(q.unsqueeze(2) - k.unsqueeze(1)).abs().sum(-1) / norm
             gate = 2 * gate.sigmoid().masked_fill(~m, 0.)
             return aff * gate
 
@@ -170,6 +170,7 @@ class MultiheadAttention(nn.Module):
         self.n_head = n_head
 
         self.aff = None
+        self.qs = None
 
     def forward(self, q, k, v, m):
         qs = self.in_proj(q).view(*q.shape[:2], self.n_head, -1).split(self.embed_dim // self.n_head, -1)
@@ -182,6 +183,7 @@ class MultiheadAttention(nn.Module):
         if self.attn_record:
             logging.debug("recording attention results.")
             self.aff = aff
+            self.qs = qs
 
         mix = torch.einsum('nqlh,nlhc->nqhc', aff, v)
 
@@ -309,7 +311,7 @@ class Transformer(nn.Module):
 
         for i, blk, kv in zip(range(len(self.resblocks)), self.resblocks, kvs):
             x = blk(x, kv['k'], kv['v'], m)
-            result.append(x)
+            result.append(x.unsqueeze(1))
 
             if self.config.op_mode.aug_query:
                 logging.debug("perform augmentation query embedding.")
@@ -383,10 +385,11 @@ class Decoder(nn.Module):
             for k in kvs[i].keys():
                 kvs[i][k] = kvs[i][k].flatten(1, 2)
 
-        x = self.class_embedding.view(1, 1, -1).repeat(kvs[0]['k'].size(0), 1, 1)
+        x = self.class_embedding.unsqueeze(0).repeat(kvs[0]['k'].size(0), 1, 1)
         x = self.drop_pre(self.ln_pre(x))
-        x = self.transformer(x, kvs, m)
+        layer_results = self.transformer(x, kvs, m)
 
+        x = layer_results.mean(dim=2)
         # drop the layer features if not required
         if (len(self.task_projections[0]) == 1):
             x = x[:, -1]

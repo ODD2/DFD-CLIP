@@ -103,6 +103,7 @@ def get_config(params):
         C.tracking.project_name = "test"
 
     if params.debug:
+        C.tracking.enabled = False
         C.trainer.num_workers = 0
         C.trainer.batch_size = 1
 

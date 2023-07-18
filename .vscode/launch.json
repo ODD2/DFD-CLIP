@@ -19,14 +19,15 @@
                 // "configs/deepfake/sgd(0.9m)-z0-pm-aq.yaml",
                 // "configs/deepfake/deepfake.yaml",
                 // "configs/deepfake/wgp.yaml",
-                "configs/deepfake/base-ga.yaml",
+                // "configs/deepfake/base-ga.yaml",
+                "configs/deepfake/base.yaml",
                 // "configs/deepfake/all.yaml",
                 // "configs/deepfake/0618/wgp+frame_attn+patch_mask-adapt.yaml",
                 // "configs/deepfake/2s(mode1):c23+resi+tune+dbal+5e-5.yaml",
                 // "/home/od/Desktop/repos/dfd-clip/configs/deepfake/2s(mode1):c23+resi+tune+dbal+5e-5+2s20f+reg_viral(hf,s,pfa).yaml",
                 // "configs/deepfake/2s(mode1):c23+resi+tune+dbal+5e-5+4s20f+reg_viral(hf,s,pfa)-e2e.yaml",
                 "--test",
-                // "--debug"
+                "--debug"
             ],
             "justMyCode": false
         },

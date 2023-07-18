@@ -238,8 +238,17 @@ class Trainer(_Trainer):
                         # cache auxiliary losses
                         for _k in other_losses.keys():
                             if(not _k in self.batch_losses ):
-                                self.batch_losses[name]=  torch.tensor([])
-                            self.batch_losses[_k] = torch.cat(self.batch_losses[_k], other_losses[_k].detach().cpu().mean())
+                                self.batch_losses[_k]=  torch.tensor([])
+
+                            _losses = None
+                            if(len(other_losses[_k].shape)==1):
+                                _losses = other_losses[_k].detach().cpu()
+                            elif(len(other_losses[_k].shape)==2):
+                                _losses = other_losses[_k].detach().cpu().mean(1)
+                            else:
+                                raise NotImplementedError()
+                                
+                            self.batch_losses[_k] = torch.cat((self.batch_losses[_k], _losses))
 
                     # update parameter.
                     self.optimizer.step()
