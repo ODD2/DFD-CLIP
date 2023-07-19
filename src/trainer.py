@@ -53,6 +53,8 @@ class Trainer(_Trainer):
     @staticmethod
     def validate_config(config):
         config = config.clone()
+        config.defrost()
+
         assert type(config.max_steps) == int
         assert config.max_steps > 0
 
@@ -78,7 +80,8 @@ class Trainer(_Trainer):
         assert config.batch_accum >= 1
 
         config.lr_scheduler = int(LRScheduler[config.lr_scheduler.upper()])
-
+        
+        config.freeze()
         return config
 
 

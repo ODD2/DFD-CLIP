@@ -123,6 +123,7 @@ class MultiheadAttention(nn.Module):
     """
 
     def __init__(self, config, num_frames, embed_dim, n_head):
+        super().__init__()
         self.num_frames = num_frames
         self.attn_mode = config.op_mode.attn_mode
         self.attn_record = config.op_mode.attn_record
@@ -138,7 +139,7 @@ class MultiheadAttention(nn.Module):
 
             if AttnMode.PATCH in self.attn_mode:
                 logging.debug("perform patch mode attention.")
-                return aff.softmax(dim=-2)
+                affinities.append(aff.softmax(dim=-2))
 
             if AttnMode.FRAME in self.attn_mode:
                 logging.debug("perform frame mode attention.")
@@ -160,8 +161,11 @@ class MultiheadAttention(nn.Module):
             gate = 2 * gate.sigmoid().masked_fill(~m, 0.)
             return aff * gate
 
-        super().__init__()
-        self.activations = [smax, coda]
+        # create list of activation drivers.
+        self.activations = []
+        for driver in config.op_mode.attn_driver:
+            self.activations.append(locals()[driver])
+
         self.n_act = len(self.activations)  # softmax and coda
         self.in_proj = nn.Linear(embed_dim, self.n_act * embed_dim)
         self.out_proj = nn.Linear(embed_dim, embed_dim)
@@ -516,6 +520,8 @@ class Detector(nn.Module):
         C.op_mode.temporal_position = True
         # > smax attention mode
         C.op_mode.attn_mode = AttnMode.PATCH.name.lower()
+        # > attention activations
+        C.op_mode.attn_driver = ["smax", "coda"]
         # > record attention scores
         C.op_mode.attn_record = False
         # > weighted global prediction
@@ -537,6 +543,7 @@ class Detector(nn.Module):
     @staticmethod
     def validate_config(config):
         config = config.clone()
+        config.defrost()
 
         config.foundation = int(Foundations[config.foundation.upper()])
 
@@ -576,6 +583,7 @@ class Detector(nn.Module):
             assert 0 <= config.train_mode.nerf_raw <= 1.0
 
         config.op_mode.attn_mode = [int(AttnMode[opt.upper()]) for opt in config.op_mode.attn_mode.split("+")]
+        assert type(config.op_mode.attn_driver) == list
         assert type(config.op_mode.temporal_position) == bool
         assert type(config.op_mode.attn_record) == bool
         assert type(config.op_mode.global_prediction) == bool
@@ -593,6 +601,7 @@ class Detector(nn.Module):
 
         config.optimizer = int(Optimizers[config.optimizer.upper()])
 
+        config.freeze()
         return config
 
     def __init__(self, config, num_frames, accelerator):

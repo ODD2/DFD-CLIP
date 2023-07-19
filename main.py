@@ -110,7 +110,8 @@ def get_config(params):
     # some sanity check
     for d_eval in C.data.eval:
         assert 'name' in d_eval
-
+    C.freeze()
+    
     return C
 
 

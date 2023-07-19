@@ -248,6 +248,8 @@ class FFPP(Dataset):
     @staticmethod
     def validate_config(config):
         config = config.clone()
+        config.defrost()
+
         assert type(config.category) == str
         assert len(config.category) > 0
 
@@ -290,6 +292,7 @@ class FFPP(Dataset):
 
         assert type(config.random_speed) == bool
 
+        config.freeze()
         return config
 
 
@@ -369,6 +372,14 @@ class FFPP(Dataset):
                             alb.RandomBrightnessContrast(
                                 brightness_limit=(-0.3, 0.3), contrast_limit=(-0.3, 0.3), p=1.
                             ),
+                        ],
+                        p=1.
+                    )
+                elif "downscale" in config.augmentation:
+                    self.sequence_augmentation = alb.ReplayCompose(
+                        [
+                            alb.Affine([0.5,1.0],keep_ratio=True,always_apply=True),
+                            alb.Affine([1.5,2.0],keep_ratio=True,always_apply=True),
                         ],
                         p=1.
                     )

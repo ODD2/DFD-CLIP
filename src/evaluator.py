@@ -23,12 +23,15 @@ class Evaluator(_Evaluator):
     @ staticmethod
     def validate_config(config):
         config = config.clone()
+        config.defrost()
+
         assert type(config.num_workers) == int
         assert config.num_workers >= 0
 
         assert type(config.batch_size) == int
         assert config.batch_size > 0
-
+        
+        config.freeze()
         return config
         
 
