@@ -295,8 +295,7 @@ class FFPP(Dataset):
         config.freeze()
         return config
 
-
-    def __init__(self, config, num_frames, clip_duration, transform=None, accelerator=None, split='train', index=0):
+    def __init__(self, config, num_frames, clip_duration, transform=None, accelerator=None, n_px=224, split='train', index=0):
         self.TYPE_DIRS = {
             'REAL': 'real/',
             'DF': 'DF/',
@@ -315,6 +314,7 @@ class FFPP(Dataset):
         self.split = split
         self.random_speed = config.random_speed
         self.transform = transform
+        self.n_px = n_px
 
         self.index = index
         self.scale = config.scale
@@ -335,7 +335,7 @@ class FFPP(Dataset):
         self._build_video_table(accelerator)
         self._build_video_list(accelerator)
 
-        if  "none" in config.augmentation:
+        if "none" in config.augmentation:
             def driver(x, replay={}):
                 return x, replay
             self.augmentation = driver
@@ -375,18 +375,13 @@ class FFPP(Dataset):
                         ],
                         p=1.
                     )
-                elif "downscale" in config.augmentation:
-                    self.sequence_augmentation = alb.ReplayCompose(
-                        [
-                            alb.Affine([0.5,1.0],keep_ratio=True,always_apply=True),
-                            alb.Affine([1.5,2.0],keep_ratio=True,always_apply=True),
-                        ],
-                        p=1.
-                    )
             else:
                 if "normal" in config.augmentation:
                     self.sequence_augmentation = alb.ReplayCompose(
                         [
+                            # alb.Resize(
+                            #     self.n_px, self.n_px,cv2.INTER_CUBIC
+                            # ),
                             alb.RGBShift(
                                 (-20, 20), (-20, 20), (-20, 20), p=0.3
                             ),
@@ -399,8 +394,18 @@ class FFPP(Dataset):
                             alb.ImageCompression(
                                 quality_lower=40, quality_upper=100, p=0.5
                             ),
-                            # RandomDownScale(
-                            #     ratio_list=[2, 2], p=0.3
+                            # alb.RandomResizedCrop(
+                            #             self.n_px, self.n_px, scale=(0.5, 0.8), ratio=(1, 1),p=0.8
+                            # ),
+                            # alb.Compose(
+                            #     [
+                            #         alb.RandomScale(
+                            #             (-0.5,-0.1),always_apply=True
+                            #         ),
+                            #         alb.Resize(
+                            #             self.n_px, self.n_px, cv2.INTER_CUBIC, always_apply=True
+                            #         )
+                            #     ],p=0.5
                             # ),
                             alb.HorizontalFlip()
                         ],
@@ -410,11 +415,18 @@ class FFPP(Dataset):
                 if "frame" in config.augmentation:
                     self.frame_augmentation = alb.ReplayCompose(
                         [
-                            alb.RGBShift((-5, 5), (-5, 5), (-5, 5), p=0.3),
+                            # alb.Resize(
+                            #     self.n_px, self.n_px,cv2.INTER_CUBIC
+                            # ),
+                            alb.RGBShift(
+                                (-5, 5), (-5, 5), (-5, 5), p=0.3
+                            ),
                             alb.HueSaturationValue(
-                                hue_shift_limit=(-0.05, 0.05), sat_shift_limit=(-0.05, 0.05), val_shift_limit=(-0.05, 0.05), p=0.3),
+                                hue_shift_limit=(-0.05, 0.05), sat_shift_limit=(-0.05, 0.05), val_shift_limit=(-0.05, 0.05), p=0.3
+                            ),
                             alb.RandomBrightnessContrast(
-                                brightness_limit=(-0.05, 0.05), contrast_limit=(-0.05, 0.05), p=0.3),
+                                brightness_limit=(-0.05, 0.05), contrast_limit=(-0.05, 0.05), p=0.3
+                            ),
                             alb.ImageCompression(
                                 quality_lower=80, quality_upper=100, p=0.5
                             ),
@@ -532,7 +544,7 @@ class FFPP(Dataset):
                     # store in video table.
                     self.video_table[df_type][comp] = video_metas
 
-    def _build_video_list(self,accelerator):
+    def _build_video_list(self, accelerator):
         self.video_list = []
 
         with open(path.join(self.root, 'splits', f'{self.split}.json')) as f:
@@ -1174,7 +1186,7 @@ class CDF(Dataset):
                             except:
                                 logging.error(f"Error Occur During Video Table Creation: {f.path}")
                             del vid_reader
-                    
+
                     # caching
                     if accelerator.is_local_main_process:
                         makedirs(path.dirname(video_cache), exist_ok=True)
@@ -1317,6 +1329,7 @@ class CDF(Dataset):
         video_idx = next(i for i, x in enumerate(self.stack_video_clips) if idx < x)
         return video_idx, *self.video_list[video_idx]
 
+
 class DFDC(Dataset):
     @staticmethod
     def get_default_config():
@@ -1393,7 +1406,7 @@ class DFDC(Dataset):
                         except:
                             logging.error(f"Error Occur During Video Table Creation: {f.path}")
                         del vid_reader
-                
+
                 # caching
                 if accelerator.is_local_main_process:
                     makedirs(path.dirname(video_cache), exist_ok=True)

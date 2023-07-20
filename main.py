@@ -239,6 +239,7 @@ def main(params):
             transform=model.transform,
             accelerator=accelerator,
             split='train',
+            n_px=model.encoder.input_resolution,
             index=category_index[cfg.category]
         ) for cfg in config.data.train
     ]
