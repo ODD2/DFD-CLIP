@@ -112,7 +112,7 @@ def main(args):
             clips, label, masks, meta, task_index = *data[:3], data[-2], data[-1]
             if (len(clips) == 0):
                 logging.error(f"video '{i}' cannot provide clip for inference, skipping...")
-                pred_prob = torch.tensor([[0.5,0.5]])
+                pred_prob = torch.tensor([[0.5, 0.5]])
                 pred_label = torch.tensor([1 if label == 0 else 0])
                 label = torch.tensor([label], device="cpu")
             else:
@@ -172,15 +172,15 @@ def main(args):
             # add straying videos into metric calculation
             stray_names = list(test_dataset.stray_videos.keys())
             stray_labels = [test_dataset.stray_videos[name] for name in stray_names]
-            stray_preds =  [0 if i > 0.5 else 1 for i in stray_labels]
+            stray_preds = [0 if i > 0.5 else 1 for i in stray_labels]
             stray_probs = [0.5] * len(stray_labels)
             accuracy_calc.add_batch(references=stray_labels, predictions=stray_preds)
             roc_auc_calc.add_batch(references=stray_labels, prediction_scores=stray_probs)
             stats[ds_cfg.name]["label"] += stray_preds
             stats[ds_cfg.name]["prob"] += stray_probs
             if args.modality == "video":
-                stats[ds_cfg.name]["meta"] += [{"path": name,"stray": 1} for name in stray_names]
-            
+                stats[ds_cfg.name]["meta"] += [{"path": name, "stray": 1} for name in stray_names]
+
             accuracy = round(accuracy_calc.compute()['accuracy'], 3)
             roc_auc = round(roc_auc_calc.compute()['roc_auc'], 3)
             logging.info(f'accuracy: {accuracy}, roc_auc: {roc_auc}')
@@ -201,18 +201,18 @@ def main(args):
     send_to_telegram(json.dumps(report, sort_keys=True, indent=4, separators=(',', ': ')))
 
 
-if __name__ == "__main__":
-    warnings.filterwarnings(action="ignore")
+def parse_args(input_args=[]):
     parser = argparse.ArgumentParser(description="Deepfake detector with foundation models.")
     parser.add_argument(
         "artifacts_dir",
         type=str,
         help="Directory to optimized model artifacts"
     )
+
     parser.add_argument(
         "--batch_size",
         type=int,
-        default=2,
+        default=16,
     )
 
     parser.add_argument(
@@ -247,7 +247,15 @@ if __name__ == "__main__":
     parser.add_argument(
         "--cfg_name",
         type=str,
-        default="config"
+        default="setting"
     )
 
-    main(parser.parse_args())
+    if len(input_args) == 0:
+        return parser.parse_args()
+    else:
+        return parser.parse_args(input_args)
+
+
+if __name__ == "__main__":
+    warnings.filterwarnings(action="ignore")
+    main(parse_args())

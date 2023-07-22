@@ -22,6 +22,9 @@ from src.callbacks.metrics import init_metrics, update_metrics, compute_metrics
 from src.callbacks.tracking import update_trackers, cache_best_model
 from src.tools.notify import send_to_telegram
 
+from inference import main as inference_runner
+from inference import parse_args as inference_arg_parser
+
 
 PROJECT_DIR = None
 
@@ -111,7 +114,7 @@ def get_config(params):
     for d_eval in C.data.eval:
         assert 'name' in d_eval
     C.freeze()
-    
+
     return C
 
 
@@ -245,7 +248,7 @@ def main(params):
     ]
 
     for dataset in train_datasets:
-       logging.info(
+        logging.info(
             f'Training Dataset {dataset.__class__.__name__.upper()} initialized with {len(dataset)} samples.'
         )
 
@@ -283,7 +286,9 @@ def main(params):
         logging.info(f"Rename directory: {PROJECT_DIR} -> {WANDB_PROJECT_DIR}")
         os.rename(PROJECT_DIR, WANDB_PROJECT_DIR)
         wandb.finish()
-        send_to_telegram(f"Training Completed, Result Location: {WANDB_PROJECT_DIR}")
+        PROJECT_DIR = WANDB_PROJECT_DIR
+
+    send_to_telegram(f"Training Completed, Result Location: {PROJECT_DIR}")
 
 
 def init_accelerator(config):
@@ -373,4 +378,12 @@ if __name__ == "__main__":
     else:
         logging.basicConfig(level="DEBUG", format=logging_fmt)
 
+    # train model
     main(params)
+
+    # run inference after training
+    inference_runner(
+        inference_arg_parser([
+            f"'{PROJECT_DIR}'"
+        ])
+    )
