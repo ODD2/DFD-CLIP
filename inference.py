@@ -64,7 +64,7 @@ def collate_fn(batch):
 
 @torch.no_grad()
 def main(args):
-    root = args.artifacts_dir
+    root = path.join(args.artifacts_dir, "")
 
     config = get_config(path.join(root, f"{args.cfg_name}.yaml"), args)
 
@@ -197,7 +197,7 @@ def main(args):
     with open(path.join(root, f'stats_{timestamp}_{args.weight_mode}_{args.modality}.pickle'), "wb") as f:
         pickle.dump(stats, f)
 
-    send_to_telegram(f"Inference for '{root.split('/')[-1]}' Complete!")
+    send_to_telegram(f"Inference for '{root.split('/')[-2]}' Complete!")
     send_to_telegram(json.dumps(report, sort_keys=True, indent=4, separators=(',', ': ')))
 
 
