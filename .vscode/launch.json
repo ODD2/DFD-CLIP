@@ -20,7 +20,7 @@
                 // "configs/deepfake/deepfake.yaml",
                 // "configs/deepfake/wgp.yaml",
                 // "configs/deepfake/base-ga.yaml",
-                "configs/deepfake/base.yaml",
+                "configs/deepfake/base-all.yaml",
                 // "configs/deepfake/all.yaml",
                 // "configs/deepfake/0618/wgp+frame_attn+patch_mask-adapt.yaml",
                 // "configs/deepfake/2s(mode1):c23+resi+tune+dbal+5e-5.yaml",

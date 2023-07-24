@@ -55,6 +55,10 @@ class CompMetric(IntEnum):
     SYNC = auto()
     NONE = auto()
 
+class QueryGuideMode(IntEnum):
+    NORMAL = auto()
+    NONE = auto()
+
 
 class Optimizers(IntEnum):
     SGD = auto()
@@ -177,6 +181,7 @@ class MultiheadAttention(nn.Module):
         self.qs = None
 
     def forward(self, q, k, v, m):
+        # qs is a tuple with elements with shape equal to: b, q, h, d
         qs = self.in_proj(q).view(*q.shape[:2], self.n_head, -1).split(self.embed_dim // self.n_head, -1)
         m = m.unsqueeze(1).unsqueeze(-1)
 
@@ -191,7 +196,7 @@ class MultiheadAttention(nn.Module):
 
         mix = torch.einsum('nqlh,nlhc->nqhc', aff, v)
 
-        return self.out_proj(mix.flatten(-2))
+        return self.out_proj(mix.flatten(-2)), torch.stack([q.flatten(-2) for q in qs], dim=1)
 
 
 class ResidualAttentionBlock(nn.Module):
@@ -219,9 +224,10 @@ class ResidualAttentionBlock(nn.Module):
         return self.attn(q, k, v, m)
 
     def forward(self, x: torch.Tensor, k: torch.Tensor, v: torch.Tensor, m: torch.Tensor):
-        x = x + self.attention(self.ln_1(x), k, v, m)
+        _x, qs = self.attention(self.ln_1(x), k, v, m)
+        x = x + _x
         x = x + self.mlp(self.ln_2(x))
-        return x
+        return x, qs
 
     def _apply_reference(self, config, block_index, layer_indices, reference_layers):
 
@@ -311,18 +317,19 @@ class Transformer(nn.Module):
         self.resblocks = nn.Sequential(*self.resblocks)
 
     def forward(self, x: torch.Tensor, kvs, m):
-        result = []
-
+        layer_results = []
+        layer_qs = []
         for i, blk, kv in zip(range(len(self.resblocks)), self.resblocks, kvs):
-            x = blk(x, kv['k'], kv['v'], m)
-            result.append(x.unsqueeze(1))
+            x, qs = blk(x, kv['k'], kv['v'], m)
+            layer_results.append(x.unsqueeze(1))
+            layer_qs.append(qs.unsqueeze(1))
 
             if self.config.op_mode.aug_query:
                 logging.debug("perform augmentation query embedding.")
                 if not (i == len(self.resblocks) - 1):
                     x = x + self.augment_queries[i]
 
-        return torch.cat(result, dim=1)
+        return torch.cat(layer_results, dim=1), torch.cat(layer_qs, dim=1)
 
 
 class Decoder(nn.Module):
@@ -340,7 +347,8 @@ class Decoder(nn.Module):
         heads = detector.encoder.heads
         output_dims = config.out_dim
         scale = width ** -0.5
-        self.class_embedding = nn.Parameter(scale * torch.randn(width))
+        self.num_classes = config.num_classes
+        self.class_embedding = nn.Parameter(scale * torch.randn(self.num_classes, width))
 
         if self.config.op_mode.temporal_position:
             self.positional_embedding = nn.Parameter(scale * torch.randn(num_frames, 1, heads, width // heads))
@@ -391,7 +399,12 @@ class Decoder(nn.Module):
 
         x = self.class_embedding.unsqueeze(0).repeat(kvs[0]['k'].size(0), 1, 1)
         x = self.drop_pre(self.ln_pre(x))
-        layer_results = self.transformer(x, kvs, m)
+
+        layer_results, layer_qs = self.transformer(
+            x,
+            kvs,
+            m
+        )
 
         x = layer_results.mean(dim=2)
         # drop the layer features if not required
@@ -422,7 +435,7 @@ class Decoder(nn.Module):
                 for layer_matrices in self.task_projections
             ]
 
-        return task_logits, video_feature
+        return task_logits, video_feature, layer_results, layer_qs
 
 
 class DINOv2(nn.Module):
@@ -474,6 +487,9 @@ class Detector(nn.Module):
         C.foundation = Foundations.CLIP.name.lower()
         C.architecture = 'ViT-B/16'
 
+        # number of classes
+        C.num_classes = 1
+
         # decode mode
         C.decode_mode = CN()
         C.decode_mode.type = DecodeMode.INDEX.name.lower()
@@ -513,6 +529,14 @@ class Detector(nn.Module):
         C.train_mode.patch_mask.ratio = 1.0
         # > nerf losses from raw label samples
         C.train_mode.nerf_raw = -1.0
+        # > query guide
+        C.train_mode.query_guide = CN()
+        C.train_mode.query_guide.type = QueryGuideMode.NONE.name.lower()
+        # - for normal mode
+        C.train_mode.query_guide.path = ""
+        C.train_mode.query_guide.key = ""
+        C.train_mode.query_guide.parts = []
+        C.train_mode.query_guide.num_layers = -1
 
         # operation mode configurations
         C.op_mode = CN()
@@ -546,6 +570,8 @@ class Detector(nn.Module):
         config.defrost()
 
         config.foundation = int(Foundations[config.foundation.upper()])
+
+        assert type(config.num_classes) == int and config.num_classes > 0
 
         config.decode_mode.type = int(DecodeMode[config.decode_mode.type.upper()])
         if config.decode_mode.type == DecodeMode.STRIDE:
@@ -581,6 +607,13 @@ class Detector(nn.Module):
         assert type(config.train_mode.nerf_raw) == float
         if config.train_mode.nerf_raw > 0:
             assert 0 <= config.train_mode.nerf_raw <= 1.0
+
+        config.train_mode.query_guide.type = int(QueryGuideMode[config.train_mode.query_guide.type.upper()])
+        if config.train_mode.query_guide.type == QueryGuideMode.NORMAL:
+            assert len(config.train_mode.query_guide.path) > 0
+            assert len(config.train_mode.query_guide.key) > 0
+            assert len(config.train_mode.query_guide.parts) > 0
+            assert config.train_mode.query_guide.num_layers > 0
 
         config.op_mode.attn_mode = [int(AttnMode[opt.upper()]) for opt in config.op_mode.attn_mode.split("+")]
         assert type(config.op_mode.attn_driver) == list
@@ -668,6 +701,21 @@ class Detector(nn.Module):
             with open(self.config.train_mode.patch_mask.path, "rb") as f:
                 self.guide_map = pickle.load(f)
 
+        if (self.config.train_mode.query_guide.type == QueryGuideMode.NORMAL):
+            file_path = self.config.train_mode.query_guide.path
+            parts = self.config.train_mode.query_guide.parts
+            key = self.config.train_mode.query_guide.key
+            with open(file_path, "rb") as f:
+                prefetch_queries = pickle.load(f)
+                self.semantic_queries = []
+                for i in self.layer_indices:
+                    layer_results = []
+                    for part in parts:
+                        layer_results.append(prefetch_queries[key][part][i])
+                    self.semantic_queries.append(torch.stack(layer_results))
+                self.semantic_queries = torch.stack(self.semantic_queries)
+                self.semantic_queries.requires_grad_(False)
+
     def predict(self, x, m, with_video_features=False, with_adapt_features=False, train=False):
         b, t, c, h, w = x.shape
 
@@ -722,7 +770,7 @@ class Detector(nn.Module):
             logging.debug("perform feature adapting")
             kvs = self.adapter(kvs)
 
-        task_logits, video_features = self.decoder(kvs, m)
+        task_logits, video_features, layer_results, layer_qs = self.decoder(kvs, m)
 
         for i in range(len(task_logits)):
             logits_l2_distance = torch.norm(task_logits[i], dim=-1, keepdim=True)
@@ -738,6 +786,11 @@ class Detector(nn.Module):
                 features["adapt"] = kvs
             else:
                 raise Exception("cannot return adaptive features without an adapter")
+
+        features["layer_results"] = layer_results
+
+        features["layer_qs"] = layer_qs
+
 
         return task_logits, features
 
@@ -776,6 +829,36 @@ class Detector(nn.Module):
             return task_losses, task_logits
 
         other_losses = {}
+
+        layer_qs = features["layer_qs"]
+
+        if not self.config.train_mode.query_guide.type == QueryGuideMode.NONE:
+            if self.config.train_mode.query_guide.type == QueryGuideMode.NORMAL:
+                cls_part_layer = self.config.train_mode.query_guide.num_layers
+                if(cls_part_layer < len(self.layer_indices)):
+                    other_losses["cls_div"] = (
+                        torch.sum(
+                            torch.nn.functional.cosine_similarity(
+                                layer_qs[:, cls_part_layer:].unsqueeze(3),
+                                layer_qs[:, cls_part_layer:].unsqueeze(2),
+                                dim=-1
+                            ).abs().mean(3),
+                            dim=-1
+                        ) - 1
+                    ).mean(1)
+                if(cls_part_layer > 0):
+                    other_losses["cls_sim"] = (
+                        torch.sum(
+                            (
+                                1 - torch.nn.functional.cosine_similarity(
+                                    layer_qs[:, :cls_part_layer].flatten(2, 3),
+                                    self.semantic_queries[:cls_part_layer].to(layer_qs.device),
+                                    dim=-1
+                                )
+                            ) / 2,
+                            dim=-1
+                        )
+                    ).mean(1)
 
         # compression related losses
         if not self.config.train_mode.compression == CompMetric.NONE:
