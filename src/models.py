@@ -55,6 +55,7 @@ class CompMetric(IntEnum):
     SYNC = auto()
     NONE = auto()
 
+
 class QueryGuideMode(IntEnum):
     NORMAL = auto()
     NONE = auto()
@@ -363,25 +364,23 @@ class Decoder(nn.Module):
             layer_indices=detector.layer_indices,
             reference_layers=detector.encoder.transformer.resblocks
         )
-        self.ln_post = LayerNorm(width)
-        self.drop_post = torch.nn.Dropout(config.dropout)
+
         self.task_projections = []
-
         for i, output_dim in enumerate(output_dims):
-            layer_matrices = []
-
-            if self.config.op_mode.global_prediction:
-                for l in detector.layer_indices:
-                    _name = f"proj{i}x{output_dim}_L{l}"
-                    setattr(self, _name, nn.Parameter(scale * torch.randn(width, output_dim)))
-                    layer_matrices.append(getattr(self, _name))
-
-            else:
-                _name = f"proj{i}x{output_dim}"
-                setattr(self, _name, nn.Parameter(scale * torch.randn(width, output_dim)))
-                layer_matrices.append(getattr(self, _name))
-
-            self.task_projections.append(layer_matrices)
+            layer_heads = []
+            for j, l in enumerate(detector.layer_indices):
+                if not self.config.op_mode.global_prediction and j < len(detector.layer_indices) - 1:
+                    continue
+                _name = f"proj{i}x{output_dim}_L{l}"
+                setattr(self, _name,
+                        nn.Sequential(
+                            LayerNorm(width),
+                            nn.Dropout(config.dropout),
+                            nn.Linear(width, output_dim, bias=False)
+                        )
+                        )
+                layer_heads.append(getattr(self, _name))
+            self.task_projections.append(layer_heads)
 
     def forward(self, kvs, m):
         m = m.repeat_interleave(kvs[0]['k'].size(2), dim=-1)
@@ -407,32 +406,28 @@ class Decoder(nn.Module):
         )
 
         x = layer_results.mean(dim=2)
-        # drop the layer features if not required
-        if (len(self.task_projections[0]) == 1):
-            x = x[:, -1]
-
-        x = self.drop_post(self.ln_post(x))
-        video_feature = x.squeeze(1)
 
         if self.config.op_mode.global_prediction:
             logging.debug("perform weighted global prediction.")
+
+            video_feature = x
+
             task_logits = [
-                sum(
-                    [
-                        (
-                            (video_feature[:, i] @ layer_matrices[i]) * (i + 1) /
-                            ((1 + len(layer_matrices)) * len(layer_matrices) / 2)
-                        )
-                        for i in range(len(layer_matrices))
-                    ]
-                )
-                for layer_matrices in self.task_projections
+                sum([
+                    layer_heads[i](video_feature[:, i])
+                    for i in range(len(layer_heads))
+                ])
+                for layer_heads in self.task_projections
             ]
         else:
             logging.debug("perform last logit prediction.")
+
+            # drop the layer features if not required
+            video_feature = x[:, -1].squeeze(1)
+
             task_logits = [
-                video_feature @ layer_matrices[-1]
-                for layer_matrices in self.task_projections
+                layer_heads[-1](video_feature)
+                for layer_heads in self.task_projections
             ]
 
         return task_logits, video_feature, layer_results, layer_qs
@@ -791,7 +786,6 @@ class Detector(nn.Module):
 
         features["layer_qs"] = layer_qs
 
-
         return task_logits, features
 
     def forward(self, x, y, m, comp=None, speed=None, train=False, single_task=None, *args, **kargs):
@@ -835,7 +829,7 @@ class Detector(nn.Module):
         if not self.config.train_mode.query_guide.type == QueryGuideMode.NONE:
             if self.config.train_mode.query_guide.type == QueryGuideMode.NORMAL:
                 cls_part_layer = self.config.train_mode.query_guide.num_layers
-                if(cls_part_layer < len(self.layer_indices)):
+                if (cls_part_layer < len(self.layer_indices)):
                     other_losses["cls_div"] = (
                         torch.sum(
                             torch.nn.functional.cosine_similarity(
@@ -846,7 +840,7 @@ class Detector(nn.Module):
                             dim=-1
                         ) - 1
                     ).mean(1)
-                if(cls_part_layer > 0):
+                if (cls_part_layer > 0):
                     other_losses["cls_sim"] = (
                         torch.sum(
                             (
