@@ -15,7 +15,7 @@ from tqdm import tqdm
 import yaml
 
 from src.datasets import FFPP, CDF, DFDC
-from src.models import Detector
+from src.models import Detector, remap_weight
 from src.tools.notify import send_to_telegram
 
 
@@ -100,7 +100,12 @@ def main(args):
         )
         logging.info(f'Dataset {test_dataset.__class__.__name__} initialized with {len(test_dataset)} samples\n')
         with accelerator.main_process_first():
-            model.load_state_dict(torch.load(path.join(root, f'{args.weight_mode}_weights.pt')))
+            model.load_state_dict(
+                remap_weight(
+                    model,
+                    torch.load(path.join(root, f'{args.weight_mode}_weights.pt'))
+                )
+            )
 
         if accelerator.is_local_main_process:
             accuracy_calc = evaluate.load("accuracy")

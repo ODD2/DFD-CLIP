@@ -209,6 +209,7 @@ def register_evaluator_callbacks(config, evaluator, **kwargs):
 
 
 def main(params):
+    global PROJECT_DIR
 
     config = get_config(params)
 
@@ -384,6 +385,6 @@ if __name__ == "__main__":
     # run inference after training
     inference_runner(
         inference_arg_parser([
-            f"'{PROJECT_DIR}'"
+            PROJECT_DIR
         ])
     )

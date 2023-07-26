@@ -1,3 +1,5 @@
+import os
+import yaml
 import pickle
 import random
 import logging
@@ -12,6 +14,28 @@ import torch
 from torch import nn
 from . import clip
 import torchvision.transforms as T
+
+
+def remap_weight(
+        detector,
+        raw_weights
+):
+    assert type(detector) == Detector
+
+    weights = {}
+    for k in raw_weights:
+        if k == "decoder.ln_post.weight":
+            weights[f"decoder.proj0x2_L{detector.layer_indices[-1]}.0.weight"] = raw_weights[k]
+        elif k == "decoder.ln_post.bias":
+            weights[f"decoder.proj0x2_L{detector.layer_indices[-1]}.0.bias"] = raw_weights[k]
+        elif k == "decoder.proj0x2":
+            weights[f"decoder.proj0x2_L{detector.layer_indices[-1]}.2.weight"] = raw_weights[k].T
+        elif k == "decoder.class_embedding" and len(raw_weights[k].shape) == 1:
+            weights[k] = raw_weights[k].unsqueeze(0)
+        else:
+            weights[k] = raw_weights[k]
+
+    return weights
 
 
 class AttnMode(IntEnum):
