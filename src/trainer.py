@@ -5,19 +5,23 @@ from collections import defaultdict
 from enum import IntEnum, auto
 
 from torch.utils.data.dataloader import DataLoader
-from torch.optim.lr_scheduler import OneCycleLR,LinearLR
+from torch.optim.lr_scheduler import OneCycleLR, LinearLR
 from yacs.config import CfgNode as CN
+
 
 class TrainMode(IntEnum):
     NORMAL = auto()
     TEACHER = auto()
 
+
 class LRScheduler(IntEnum):
     ONECYCLE = auto()
     LINEAR = auto()
 
+
 class _Trainer:
     pass
+
 
 class Trainer(_Trainer):
     '''
@@ -31,6 +35,7 @@ class Trainer(_Trainer):
         C = CN()
         C.name = "Trainer"
         C.max_steps = 100
+        C.early_stop = -1
         C.num_workers = 4
         C.batch_size = 16
         C.learning_rate = 1e-3
@@ -58,19 +63,22 @@ class Trainer(_Trainer):
         assert type(config.max_steps) == int
         assert config.max_steps > 0
 
+        assert type(config.early_stop) == int
+        assert config.early_stop == -1 or config.early_stop > 0
+
         assert type(config.num_workers) == int
         assert config.num_workers >= 0
 
         assert type(config.batch_size) == int
         assert config.batch_size > 0
-        
+
         assert type(config.learning_rate) == float
         assert config.learning_rate > 0
 
         config.mode.type = int(TrainMode[config.mode.type.upper()])
         if config.mode.type == TrainMode.TEACHER:
             assert type(config.mode.teach_at) == int
-            assert 0 < config.mode.teach_at 
+            assert 0 < config.mode.teach_at
             assert config.mode.teach_at <= config.max_steps
 
             assert type(config.mode.teach_ema) == float
@@ -80,11 +88,9 @@ class Trainer(_Trainer):
         assert config.batch_accum >= 1
 
         config.lr_scheduler = int(LRScheduler[config.lr_scheduler.upper()])
-        
+
         config.freeze()
         return config
-
-
 
     def __init__(self, config, accelerator, model, datasets):
         config = self.validate_config(config)
@@ -109,22 +115,21 @@ class Trainer(_Trainer):
                 start_factor=0.04,
                 total_iters=(config.max_steps/3)
             )
-        
+
         # pre-cache number of tasks before distributed learning for further usage
         self.total_tasks = len(model.config.out_dim)
 
         # duplicate model as teacher
         if (self.config.mode.type == TrainMode.TEACHER):
-            self.teacher =  copy.deepcopy(self.model)
+            self.teacher = copy.deepcopy(self.model)
             self.teaching = False
-        
-        
+
         # let the accelerator prepare the objects for ddp and amp
-        if(self.config.mode.type == TrainMode.TEACHER):
+        if (self.config.mode.type == TrainMode.TEACHER):
             self.model, self.optimizer, self.lr_scheduler, self.teacher = self.accelerator.prepare(
                 self.model, self.optimizer, self.lr_scheduler, self.teacher
             )
-        
+
         else:
             self.model, self.optimizer, self.lr_scheduler = self.accelerator.prepare(
                 self.model, self.optimizer, self.lr_scheduler
@@ -157,6 +162,7 @@ class Trainer(_Trainer):
         self.trigger_callbacks('on_training_start')
 
         self.steps = 0
+        self.early_stop_counter = 0
 
         dataset_iterators = {
             name: iter(self.dataloaders[name]) for name in self.dataloaders
@@ -164,13 +170,13 @@ class Trainer(_Trainer):
 
         while True:
             self.trigger_callbacks('on_batch_start')
-            
+
             # initiliazation
             self.model.zero_grad(set_to_none=True)
             self.model.train()
-            self.batch_losses = {name: torch.tensor([]) for name in  dataset_iterators.keys()}
-            self.batch_logits = {name: torch.tensor([]) for name in  dataset_iterators.keys()}
-            self.batch_labels = {name: torch.tensor([]) for name in  dataset_iterators.keys()}
+            self.batch_losses = {name: torch.tensor([]) for name in dataset_iterators.keys()}
+            self.batch_logits = {name: torch.tensor([]) for name in dataset_iterators.keys()}
+            self.batch_labels = {name: torch.tensor([]) for name in dataset_iterators.keys()}
 
             # forward pass for batches from each datasets
             for _ in range(self.config.batch_accum):
@@ -191,7 +197,8 @@ class Trainer(_Trainer):
                         if (self.config.mode.type == TrainMode.TEACHER and self.teaching):
                             with torch.no_grad():
                                 # pseudo labels from EMA teacher
-                                _, teacher_logits = self.teacher(batch[0], [None] * self.total_tasks, batch[2], single_task=-1)
+                                _, teacher_logits = self.teacher(
+                                    batch[0], [None] * self.total_tasks, batch[2], single_task=-1)
 
                             # ASSUMPTION: all labels are probabilities.
                             # replace with true labels of the target task
@@ -203,7 +210,7 @@ class Trainer(_Trainer):
                             # update the batch data
                             batch[1] = task_labels
 
-                            single_task  = None
+                            single_task = None
                         else:
                             task_labels = [
                                 batch[1] if i == task_index else None
@@ -234,23 +241,29 @@ class Trainer(_Trainer):
                             )
 
                         # cache output task artifacts
-                        self.batch_losses[name] = torch.cat((self.batch_losses[name], task_losses[task_index].detach().cpu()))
-                        self.batch_logits[name] = torch.cat((self.batch_logits[name],task_logits[task_index].detach().cpu()))
-                        self.batch_labels[name] = torch.cat((self.batch_labels[name],batch[1][task_index].detach().cpu()))
+                        self.batch_losses[name] = torch.cat(
+                            (self.batch_losses[name], task_losses[task_index].detach().cpu())
+                        )
+                        self.batch_logits[name] = torch.cat(
+                            (self.batch_logits[name], task_logits[task_index].detach().cpu())
+                        )
+                        self.batch_labels[name] = torch.cat(
+                            (self.batch_labels[name], batch[1][task_index].detach().cpu())
+                        )
 
                         # cache auxiliary losses
                         for _k in other_losses.keys():
-                            if(not _k in self.batch_losses ):
-                                self.batch_losses[_k]=  torch.tensor([])
+                            if (not _k in self.batch_losses):
+                                self.batch_losses[_k] = torch.tensor([])
 
                             _losses = None
-                            if(len(other_losses[_k].shape)==1):
+                            if (len(other_losses[_k].shape) == 1):
                                 _losses = other_losses[_k].detach().cpu()
-                            elif(len(other_losses[_k].shape)==2):
+                            elif (len(other_losses[_k].shape) == 2):
                                 _losses = other_losses[_k].detach().cpu().mean(1)
                             else:
                                 raise NotImplementedError()
-                                
+
                             self.batch_losses[_k] = torch.cat((self.batch_losses[_k], _losses))
 
                     # update parameter.
@@ -261,7 +274,6 @@ class Trainer(_Trainer):
                     self.model.zero_grad(set_to_none=True)
             # accumulate steps
             self.steps += 1
-
 
             # update the teacher's parameters under the ema method.
             if (self.config.mode.type == TrainMode.TEACHER):
@@ -282,6 +294,9 @@ class Trainer(_Trainer):
 
             self.trigger_callbacks('on_batch_end')
 
-            if self.steps >= self.config.max_steps:
+            if (
+                self.steps >= self.config.max_steps or
+                (self.config.early_stop > 0 and self.early_stop_counter > self.config.early_stop)
+            ):
                 self.trigger_callbacks('on_training_end')
                 return

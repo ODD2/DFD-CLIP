@@ -118,23 +118,19 @@ def get_config(params):
     return C
 
 
-def register_trainer_callbacks(config, trainer, **kwargs):
+def register_trainer_callbacks(config, trainer, evaluator):
     def evaluation_proxy(trainer):
         if trainer.steps % trainer.evaluation_interval:
             return
-        kwargs['evaluator'].run(trainer)
-
-    def save_model(trainer):
-        if kwargs['evaluator'].best_model_state:
-            trainer.accelerator.save(
-                kwargs['evaluator'].best_model_state,
-                os.path.join(PROJECT_DIR, 'best_weights.pt')
-            )
-        if kwargs['evaluator'].last_model_state:
-            trainer.accelerator.save(
-                kwargs['evaluator'].last_model_state,
-                os.path.join(PROJECT_DIR, 'last_weights.pt')
-            )
+        # best main metric is none before the first evaluation
+        prev_metric = getattr(evaluator, 'best_main_metric', None)
+        evaluator.run(trainer)
+        next_metric = evaluator.best_main_metric
+        # record
+        if (prev_metric == next_metric):
+            trainer.early_stop_counter += 1
+        else:
+            trainer.early_stop_counter = 0
 
     # timer
     timer_events = ['training', 'epoch', 'batch']
@@ -147,29 +143,58 @@ def register_trainer_callbacks(config, trainer, **kwargs):
     trainer.add_callback('on_batch_end', update_metrics)
     if trainer.accelerator.is_local_main_process:
         trainer.add_callback('on_training_start', init_metrics)
-        trainer.add_callback('on_batch_end', compute_metrics,
-                             training_eval_interval=config.system.training_eval_interval)
+        trainer.add_callback(
+            'on_batch_end',
+            compute_metrics,
+            training_eval_interval=config.system.training_eval_interval
+        )
 
     # tracker
     if config.tracking.enabled and trainer.accelerator.is_local_main_process:
         trainer.add_callback('on_batch_end', update_trackers)
-        trainer.add_callback('on_training_end', save_model)
+        # TODO: save training status
+        # trainer.add_callback('on_training_end', save_training_status)
 
     # stdout logger
-    trainer.add_callback('on_batch_end',
-                         lambda trainer: logging.info(f'{trainer.steps} | loss {trainer.batch_loss_info}, {trainer.batch_duration:.2f}s'))
-    trainer.add_callback('on_epoch_end',
-                         lambda trainer: logging.info(f'epoch takes {trainer.epoch_duration:.2f}s'))
-    trainer.add_callback('on_training_end',
-                         lambda trainer: logging.info(f'training completed in {timedelta(seconds=trainer.training_duration)}'))
+    trainer.add_callback(
+        'on_batch_end',
+        lambda trainer: logging.info(
+            f'{trainer.steps} | loss {trainer.batch_loss_info}, {trainer.batch_duration:.2f}s'
+        )
+    )
+    trainer.add_callback(
+        'on_epoch_end',
+        lambda trainer: logging.info(
+            f'epoch takes {trainer.epoch_duration:.2f}s'
+        )
+    )
+    trainer.add_callback(
+        'on_training_end',
+        lambda trainer: logging.info(
+            f'training completed in {timedelta(seconds=trainer.training_duration)}'
+        )
+    )
 
     # evaluator
-    trainer.add_callback('on_batch_end', evaluation_proxy, evaluation_interval=config.system.evaluation_interval)
+    trainer.add_callback(
+        'on_batch_end',
+        evaluation_proxy,
+        evaluation_interval=config.system.evaluation_interval
+    )
 
 
-def register_evaluator_callbacks(config, evaluator, **kwargs):
-    def clear_current_main_metrics(evaluator):
-        evaluator.current_main_metrics = []
+def register_evaluator_callbacks(config, evaluator):
+    def save_model(evaluator):
+        if evaluator.best_model_state:
+            evaluator.accelerator.save(
+                evaluator.best_model_state,
+                os.path.join(PROJECT_DIR, 'best_weights.pt')
+            )
+        if evaluator.last_model_state:
+            evaluator.accelerator.save(
+                evaluator.last_model_state,
+                os.path.join(PROJECT_DIR, 'last_weights.pt')
+            )
 
     # timer
     timer_events = ['evaluation', 'dataloader']
@@ -186,25 +211,31 @@ def register_evaluator_callbacks(config, evaluator, **kwargs):
         evaluator.add_callback('on_evaluation_end', compute_metrics, training_eval_interval=1)
 
     # tracker
-    if config.tracking.enabled and evaluator.accelerator.is_local_main_process:
-        evaluator.add_callback('on_evaluation_end', update_trackers)
-
+    if evaluator.accelerator.is_local_main_process:
         # model saver
-        evaluator.add_callback('on_evaluation_start', clear_current_main_metrics,
-                               main_metric=config.tracking.main_metric,
-                               compare_fn=config.tracking.compare_fn,
-                               current_main_metrics=[])
-        evaluator.add_callback('on_evaluation_end', cache_best_model, best_model_state=None, last_model_state=None)
+        evaluator.add_callback(
+            'on_evaluation_end',
+            cache_best_model,
+            main_metric=config.tracking.main_metric,
+            compare_fn=config.tracking.compare_fn,
+            best_model_state=None,
+            last_model_state=None
+        )
+        evaluator.add_callback('on_evaluation_end', save_model)
 
     # stdout logger
-    evaluator.add_callback('on_batch_end',
-                           lambda evaluator: logging.info(
-                               f'{evaluator.steps}.{evaluator.batch_num} | loss {evaluator.batch_loss_info}')
-                           )
+    evaluator.add_callback(
+        'on_batch_end',
+        lambda evaluator: logging.info(
+            f'{evaluator.steps}.{evaluator.batch_num} | loss {evaluator.batch_loss_info}'
+        )
+    )
 
     evaluator.add_callback(
         'on_evaluation_end',
-        lambda evaluator: logging.info(f'evaluation completed in {evaluator.evaluation_duration:.2f}')
+        lambda evaluator: logging.info(
+            f'evaluation completed in {evaluator.evaluation_duration:.2f}'
+        )
     )
 
 
@@ -275,7 +306,7 @@ def main(params):
     evaluator = globals()[config.evaluator.name](config.evaluator, accelerator, eval_datasets)
 
     # register callbacks
-    register_trainer_callbacks(config, trainer, evaluator=evaluator)
+    register_trainer_callbacks(config, trainer, evaluator)
     register_evaluator_callbacks(config, evaluator)
 
     # start training

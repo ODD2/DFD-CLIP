@@ -80,8 +80,7 @@ def init_metrics(agent):
         for cfg in agent.config.metrics
     }
     # agent.roc_auc_calc = evaluate.load("roc_auc")
-    agent.losses = {
-    }
+    agent.losses = {}
 
 
 @torch.no_grad()
