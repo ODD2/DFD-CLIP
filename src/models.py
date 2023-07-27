@@ -505,6 +505,11 @@ class Detector(nn.Module):
         C.name = "Detector"
         C.foundation = Foundations.CLIP.name.lower()
         C.architecture = 'ViT-B/16'
+        # the pretrained weight for encoder
+        C.encoder_weight = ""
+
+        # number of prompts
+        C.num_prompts = 50
 
         # number of classes
         C.num_classes = 1
@@ -589,6 +594,9 @@ class Detector(nn.Module):
         config.defrost()
 
         config.foundation = int(Foundations[config.foundation.upper()])
+        assert config.foundation == Foundations.CLIP
+
+        assert type(config.num_prompts) == int and config.num_prompts > 0
 
         assert type(config.num_classes) == int and config.num_classes > 0
 
@@ -599,6 +607,8 @@ class Detector(nn.Module):
         elif config.decode_mode.type == DecodeMode.INDEX:
             assert type(config.decode_mode.indices) == list
             assert len(config.decode_mode.indices) > 0, "indices unspecified for decoding."
+
+        assert type(config.encoder_weight) == str
 
         assert type(config.out_dim) == list
 
@@ -663,7 +673,12 @@ class Detector(nn.Module):
 
         with accelerator.main_process_first():
             if config.foundation == Foundations.CLIP:
-                self.encoder = disable_gradients(clip.load(config.architecture)[0].visual.float())
+                self.encoder = disable_gradients(
+                    clip.load(
+                        config.architecture,
+                        prompts=config.num_prompts
+                    )[0].visual.float()
+                )
             elif config.foundation == Foundations.DINO2:
                 self.encoder = disable_gradients(DINOv2())
             elif config.foundation == Foundations.FARL:
@@ -674,6 +689,13 @@ class Detector(nn.Module):
                 )
                 self.encoder = _model.visual.float()
                 self.encoder = disable_gradients(self.encoder)
+
+        if len(self.config.encoder_weight) > 0:
+            self.encoder.load_state_dict(
+                {
+                    k[8:]: v for k, v in torch.load(self.config.encoder_weight, map_location="cpu").items() if k[:7] == "encoder"
+                }
+            )
 
         self.losses = []
 
@@ -737,7 +759,6 @@ class Detector(nn.Module):
 
     def predict(self, x, m, with_video_features=False, with_adapt_features=False, train=False):
         b, t, c, h, w = x.shape
-
         with torch.no_grad():
             # get key and value from each CLIP ViT layer
             kvs = self.encoder(x.flatten(0, 1))
@@ -1198,3 +1219,156 @@ class Adaptor(nn.Module):
                 else:
                     kvs[i][k] = features
         return kvs
+
+
+class VPT(nn.Module):
+    """
+    Deepfake video detector (also a video classifier)
+
+    A series of video frames are first fed into CLIP image encoder
+    we export key and values for each frame in each layer of CLIP ViT
+    these k, v then further flatten on the temporal dimension
+    resulting in a series of tokens for each video.
+
+    The decoder aggregates the exported key and values in an attention manner 
+    a CLS query token is learned during decoding.
+    """
+    @staticmethod
+    def get_default_config():
+        C = CN(new_allowed=True)
+        C.name = "VPT"
+        C.out_dim = []
+        C.losses = []
+        C.num_prompts = 20
+        # regularization
+        C.dropout = 0.0
+        C.weight_decay = 0.01
+        # optimizer
+        C.optimizer = Optimizers.SGD.name.lower()
+        return C
+
+    @staticmethod
+    def validate_config(config):
+        config = config.clone()
+        config.defrost()
+
+        assert type(config.num_prompts) == int and config.num_prompts > 0
+
+        assert type(config.out_dim) == list
+
+        assert type(config.losses) == list
+
+        assert type(config.dropout) == float
+        assert 0 <= config.dropout <= 1
+
+        assert type(config.weight_decay) == float
+        assert 0 <= config.weight_decay <= 1
+
+        config.optimizer = int(Optimizers[config.optimizer.upper()])
+        config.freeze()
+        return config
+
+    def __init__(self, config, num_frames, accelerator):
+        super().__init__()
+        self.config = self.validate_config(config)
+
+        with accelerator.main_process_first():
+            self.encoder = disable_gradients(
+                clip.load(
+                    config.architecture,
+                    prompts=config.num_prompts
+                )[0].visual.float()
+            )
+            self.encoder.prompt_embeddings.requires_grad_(True)
+
+        self.out_dim = config.out_dim
+        self.weight_decay = config.weight_decay
+        self.optimizer = config.optimizer
+        self.losses = []
+        self.task_proj = []
+        self.cls_drop = nn.Dropout(self.config.dropout)
+        self.cls_ln = nn.LayerNorm(self.encoder.width)
+
+        for loss in config.losses:
+            if type(loss) == str:
+                self.losses.append(globals()[loss]())
+            else:
+                self.losses.append(globals()[loss.name](**(dict(loss.args) if "args" in loss else {})))
+
+        # class linear prob
+        for i, v in enumerate(self.out_dim):
+            name = f"proj{i}_{v}"
+            setattr(self, name, nn.Parameter(torch.randn((self.encoder.width, v))))
+            self.task_proj.append(getattr(self, name))
+
+        # transformations
+        self.transform = self._transform(self.encoder.input_resolution)
+
+    def predict(self, x):
+        b, t, c, h, w = x.shape
+
+        # get key and value from each CLIP ViT layer
+        kvs = self.encoder(x.flatten(0, 1), with_out=True)
+
+        task_logits = [self.cls_ln(self.cls_drop(kvs[-1]["out"][:, 0])) @ m for m in self.task_proj]
+        # task_logits = [self.cls_ln(kvs[-1]["out"][:, 0]) @ m for m in self.task_proj]
+
+        for i in range(len(task_logits)):
+            logits_l2_distance = torch.norm(task_logits[i], dim=-1, keepdim=True)
+            task_logits[i] = 5 * task_logits[i] / (logits_l2_distance + 1e-10)
+
+        return task_logits, None
+
+    def forward(self, x, y, m, comp=None, speed=None, train=False, single_task=None, *args, **kargs):
+        device = x.device
+        b, t, c, h, w = x.shape
+
+        task_logits, features = self.predict(x)
+
+        task_losses = [
+            loss_fn(logits, labels) if single_task == None or i == single_task else 0
+            for i, loss_fn, logits, labels in zip(range(len(self.losses)), self.losses, task_logits, y)
+        ]
+
+        if not train:
+            return task_losses, task_logits
+
+        other_losses = {}
+
+        return task_losses, task_logits, other_losses
+
+    def _transform(self, n_px):
+        """
+        Ported from:
+        https://github.com/openai/CLIP/blob/d50d76daa670286dd6cacf3bcd80b5e4823fc8e1/clip/clip.py#L79
+        """
+        return T.Compose([
+            T.Resize(n_px, interpolation=T.InterpolationMode.BICUBIC),
+            T.CenterCrop(n_px),
+            T.ConvertImageDtype(torch.float32),
+            T.Normalize((0.48145466, 0.4578275, 0.40821073),
+                        (0.26862954, 0.26130258, 0.27577711)),
+        ])
+
+    def configure_optimizers(self, lr):
+        params = [i for i in self.parameters() if i.requires_grad]
+        if (self.config.optimizer == Optimizers.SGD):
+            return torch.optim.SGD(
+                params=params,
+                lr=lr,
+                weight_decay=self.config.weight_decay,
+                momentum=0.95
+            )
+        elif (self.config.optimizer == Optimizers.ADAMW):
+            return torch.optim.AdamW(
+                params=params,
+                lr=lr,
+                weight_decay=self.config.weight_decay
+            )
+
+    def train(self, mode=True):
+        super().train(mode)
+        if (mode):
+            self.encoder.eval()
+            self.encoder.prompt_drop.train()
+        return self

@@ -300,3 +300,155 @@ class Trainer(_Trainer):
             ):
                 self.trigger_callbacks('on_training_end')
                 return
+
+
+class VPTTrainer(Trainer):
+    '''
+    Generic neural network trainer. Expect to get the optmizer and loss from
+    the model instance. (since they're more model-dependent). Metrics and
+    loggers are also expected to be added via callbacks.
+    '''
+
+    @staticmethod
+    def get_default_config():
+        C = Trainer.get_default_config()
+        C.name = "VPTTrainer"
+        return C
+
+    @staticmethod
+    def validate_config(config):
+        config = config.clone()
+        config = Trainer.validate_config(config)
+
+        assert config.mode.type == TrainMode.NORMAL, "VPT now supports only normal mode training."
+
+        return config
+
+    def __init__(self, config, accelerator, model, datasets):
+        config = self.validate_config(config)
+        self.config = config
+        self.accelerator = accelerator
+        self.callbacks = defaultdict(list)
+
+        self.model = model
+        if config.lr_scheduler == LRScheduler.ONECYCLE:
+            self.optimizer = model.configure_optimizers(config.learning_rate / 25)
+            self.lr_scheduler = OneCycleLR(
+                optimizer=self.optimizer,
+                max_lr=config.learning_rate,
+                total_steps=(config.max_steps * self.accelerator.state.num_processes)
+            )
+        elif config.lr_scheduler == LRScheduler.LINEAR:
+            self.optimizer = model.configure_optimizers(config.learning_rate)
+            self.lr_scheduler = LinearLR(
+                optimizer=self.optimizer,
+                start_factor=0.04,
+                total_iters=min((config.max_steps / 3), 3000)
+            )
+        else:
+            raise NotImplementedError()
+
+        # pre-cache number of tasks before distributed learning for further usage
+        self.total_tasks = len(model.out_dim)
+
+        self.dataloaders = {}
+
+        # let the accelerator prepare the objects for ddp and amp
+        self.model, self.optimizer, self.lr_scheduler = self.accelerator.prepare(
+            self.model, self.optimizer, self.lr_scheduler
+        )
+
+        for dataset in datasets:
+            self.dataloaders[f"{dataset.category}/{dataset.name}"] = self.accelerator.prepare(
+                DataLoader(
+                    dataset,
+                    shuffle=True,
+                    batch_size=config.batch_size,
+                    num_workers=config.num_workers,
+                    collate_fn=dataset.collate_fn
+                )
+            )
+
+    def add_callback(self, onevent: str, callback, **kwargs):
+        self.callbacks[onevent].append(callback)
+        for k, v in kwargs.items():
+            setattr(self, k, v)
+
+    def trigger_callbacks(self, onevent: str):
+        self.event = onevent
+        for callback in self.callbacks.get(onevent, []):
+            callback(self)
+
+    def run(self):
+        self.trigger_callbacks('on_training_start')
+
+        self.steps = 0
+        self.early_stop_counter = 0
+
+        dataset_iterators = {
+            name:
+            iter(dataloader) for name, dataloader in self.dataloaders.items()
+        }
+
+        while True:
+            self.trigger_callbacks('on_batch_start')
+
+            self.model.zero_grad(set_to_none=True)
+            self.batch_losses = {}
+            self.batch_logits = {}
+            self.batch_labels = {}
+            self.model.train()
+            for name in dataset_iterators.keys():
+                try:
+                    batch = next(dataset_iterators[name])
+                except StopIteration:
+                    dataset_iterators[name] = iter(self.dataloaders[name])
+                    batch = next(dataset_iterators[name])
+
+                # cache the index of source task.
+                task_index = batch[-1][0]
+
+                task_labels = [
+                    batch[1] if i == task_index else None
+                    for i in range(self.total_tasks)
+                ]
+
+                batch[1] = task_labels
+
+                # forward and calculate the loss
+                task_losses, task_logits, other_losses = self.model(
+                    *batch[:5],
+                    train=True,
+                    single_task=task_index
+                )
+
+                # back propagation
+                self.accelerator.backward(
+                    task_losses[task_index].mean() +
+                    sum([other_losses[lname].mean() for lname in other_losses.keys()])
+                )
+
+                # cache output task artifacts
+                self.batch_losses[name] = task_losses[task_index].detach()
+                self.batch_logits[name] = task_logits[task_index].detach()
+                self.batch_labels[name] = batch[1][task_index].detach()
+
+                # cache auxiliary losses
+                for _k, _v in other_losses.items():
+                    self.batch_losses[_k] = _v.detach().mean()
+
+            self.optimizer.step()
+            self.lr_scheduler.step()
+            self.model.zero_grad(set_to_none=True)
+
+            self.steps += 1
+
+            # batch loss infos
+            self.batch_loss_info = ",".join(
+                [f"{losses.mean().item()}({name}) " for name, losses in self.batch_losses.items()]
+            )
+            self.trigger_callbacks('on_batch_end')
+
+            if self.steps >= self.config.max_steps:
+                self.trigger_callbacks('on_training_end')
+                return

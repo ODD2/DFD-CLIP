@@ -28,12 +28,12 @@
 # # (len(frames),label,len(mask))
 # print(type(c.dump()))
 # print(c.dump()[:10])
-import torchvision
+# import torchvision
 
-torchvision.io.VideoReader(
-    "datasets/dfdc_250/videos/aalscayrfi.avi",
-    "video"
-)
+# torchvision.io.VideoReader(
+#     "datasets/dfdc_250/videos/aalscayrfi.avi",
+#     "video"
+# )
 
 # import os
 # import random
@@ -85,3 +85,31 @@ torchvision.io.VideoReader(
 # import warnings
 # # warnings.filterwarnings("ignore",".*efficient_attention_forward_cutlass does not have a deterministic implementation.*",UserWarning)
 # print("Differences:{}".format(torch.sum((m(x, is_training=True)["q"][0] == m(x, is_training=True)["q"][0]) == False)))
+# import pickle
+# import random
+# import logging
+# import numpy as np
+# from math import comb
+# from itertools import combinations
+# from collections import OrderedDict
+
+# from yacs.config import CfgNode as CN
+# import torch
+# from torch import nn
+# from src.models import clip
+# import torchvision.transforms as T
+
+
+# def disable_gradients(module: nn.Module):
+#     for params in module.parameters():
+#         params.requires_grad = False
+#     return module
+
+
+# model = disable_gradients(clip.load("ViT-B/16")[0].visual.float())
+# model(torch.randn(1, 3, 224, 224).to("cuda"))
+
+
+import torch
+
+print({k[8:]:v for k,v in torch.load("logs/test/magic-hill-770/best_weights.pt").items() if "encoder" in k})

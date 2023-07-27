@@ -722,8 +722,12 @@ class FFPP(Dataset):
                     video_clip_samples = int(
                         video_sample_freq * self.clip_duration * video_speed_factor)
                     # - the amount of frames to skip in order to meet the num_frames per clip.(excluding the head & tail frames )
-                    video_sample_stride = (
-                        (video_clip_samples - 1) / (self.num_frames - 1)) / video_sample_freq
+                    if (self.num_frames == 1):
+                        video_sample_stride = 0
+                    else:
+                        video_sample_stride = (
+                            (video_clip_samples - 1) / (self.num_frames - 1)
+                        ) / video_sample_freq
                     logging.debug(f"Loading Video: {vid_path}")
                     logging.debug(f"Sample Offset: {video_sample_offset}")
                     logging.debug(f"Sample Stride: {video_sample_stride}")
@@ -1058,7 +1062,13 @@ class RPPG(Dataset):
                 # - the amount of frames for the duration of a clip
                 video_clip_samples = int(session_meta.session_video_sample_freq * self.clip_duration)
                 # - the amount of frames to skip in order to meet the num_frames per clip.(excluding the head & tail frames )
-                video_sample_stride = (video_clip_samples - 1) / (self.num_frames - 1) / video_sample_freq
+                if (self.num_frames == 1):
+                    video_sample_stride = 0
+                else:
+                    video_sample_stride = (
+                        (video_clip_samples - 1) / (self.num_frames - 1) /
+                        video_sample_freq
+                    )
                 # - fetch frames of clip duration
                 logging.debug(f"Loading video: {comp_video_path}")
                 logging.debug(f"Sample Offset: {video_sample_offset}")
@@ -1283,7 +1293,12 @@ class CDF(Dataset):
                 # - the amount of frames for the duration of a clip
                 video_clip_samples = int(video_sample_freq * self.clip_duration)
                 # - the amount of frames to skip in order to meet the num_frames per clip.(excluding the head & tail frames )
-                video_sample_stride = ((video_clip_samples - 1) / (self.num_frames - 1)) / video_sample_freq
+                if (self.num_frames == 1):
+                    video_sample_stride = 0
+                else:
+                    video_sample_stride = (
+                        (video_clip_samples - 1) / (self.num_frames - 1)
+                    ) / video_sample_freq
                 logging.debug(f"Loading Video: {video_meta['path']}")
                 logging.debug(f"Sample Offset: {video_sample_offset}")
                 logging.debug(f"Sample Stride: {video_sample_stride}")
@@ -1506,7 +1521,12 @@ class DFDC(Dataset):
                 # - the amount of frames for the duration of a clip
                 video_clip_samples = int(video_sample_freq * self.clip_duration)
                 # - the amount of frames to skip in order to meet the num_frames per clip.(excluding the head & tail frames )
-                video_sample_stride = ((video_clip_samples - 1) / (self.num_frames - 1)) / video_sample_freq
+                if (self.num_frames == 1):
+                    video_sample_stride = 0
+                else:
+                    video_sample_stride = (
+                        (video_clip_samples - 1) / (self.num_frames - 1)
+                    ) / video_sample_freq
                 logging.debug(f"Loading Video: {video_meta['path']}")
                 logging.debug(f"Sample Offset: {video_sample_offset}")
                 logging.debug(f"Sample Stride: {video_sample_stride}")

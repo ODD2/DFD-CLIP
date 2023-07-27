@@ -1,0 +1,105 @@
+data:
+  clip_duration: 5
+  eval:
+  - augmentation: none
+    category: Deepfake
+    compressions:
+    - c23
+    contrast: false
+    detection_level: video
+    name: FFPP
+    pack: false
+    pair: false
+    root_dir: ./datasets/ffpp/
+    scale: 1.0
+    types:
+    - REAL
+    - DF
+    - FS
+    - F2F
+    - NT
+  - category: Deepfake
+    name: DFDC
+    pack: false
+    root_dir: ./datasets/dfdc/
+    scale: 0.1
+  - category: Deepfake
+    name: CDF
+    pack: false
+    root_dir: ./datasets/cdf/
+    scale: 1.0
+  num_frames: 1
+  train:
+  - augmentation: normal+frame
+    category: Deepfake
+    compressions:
+    - c23
+    contrast: true
+    detection_level: video
+    name: FFPP
+    pack: false
+    pair: false
+    root_dir: ./datasets/ffpp/
+    scale: 1.0
+    types:
+    - REAL
+    - DF
+    - FS
+    - F2F
+    - NT
+evaluator:
+  batch_size: 120
+  metrics:
+  - name: deepfake/ffpp
+    types:
+    - accuracy
+    - roc_auc
+  - name: deepfake/cdf
+    types:
+    - accuracy
+    - roc_auc
+  - name: deepfake/dfdc
+    types:
+    - accuracy
+    - roc_auc
+  name: VPTEvaluator
+  num_workers: 8
+model:
+  num_prompts: 20
+  architecture: ViT-B/16
+  dropout: 0.5
+  losses:
+  - auc_roc
+  name: VPT
+  out_dim:
+  - 2
+  weight_decay: 0.01
+  optimizer: adamw
+system:
+  deterministic_training: true
+  evaluation_interval: 500
+  mixed_precision: 'no'
+  seed: 0
+  training_eval_interval: 10
+tracking:
+  compare_fn: max
+  default_project_prefix: version
+  directory: logs/deepfake
+  enabled: true
+  main_metric: deepfake/ffpp/roc_auc
+  project_name: deepfake
+  tool: wandb
+trainer:
+  batch_size: 45
+  learning_rate: 0.01
+  max_steps: 6000
+  metrics:
+  - name: deepfake/ffpp
+    types:
+    - accuracy
+    - roc_auc
+  mode: 
+    type: normal
+  name: VPTTrainer
+  lr_scheduler: linear
+  num_workers: 8

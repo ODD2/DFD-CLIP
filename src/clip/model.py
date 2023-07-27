@@ -1,3 +1,4 @@
+import math
 from collections import OrderedDict
 from typing import Tuple, Union
 
@@ -233,11 +234,27 @@ class Transformer(nn.Module):
         self.layers = layers
         self.resblocks = nn.Sequential(*[ResidualAttentionBlock(width, heads, attn_mask) for _ in range(layers)])
 
-    def forward(self, x: torch.Tensor, with_out=False, with_q=False):
+    def forward(self, x: torch.Tensor, prompt_embeddings: torch.Tensor, with_out=False, with_q=False, with_prompt=False):
         # key and value from each layer
         kvs = []
-        for blk in self.resblocks:
-            a = blk(x)
+        prompts = prompt_embeddings.shape[1]
+
+        for i, blk in enumerate(self.resblocks):
+            prompt_memory = (
+                prompt_embeddings[i].unsqueeze(0).expand(x.shape[0], -1, -1) +
+                (0 if i == 0 else x[:, 1: 1 + prompts])
+            )
+            a = blk(
+                torch.cat(
+                    [
+                        x[:, :1],
+                        prompt_memory,
+                        x[:, (1 if i == 0 else (prompts + 1)):]
+                    ],
+                    dim=1
+                )
+            )
+
             if (with_out):
                 x = a['out']
             else:
@@ -246,13 +263,23 @@ class Transformer(nn.Module):
             if (not with_q):
                 a.pop('q')
 
+            if (not with_prompt):
+                for k in a:
+                    a[k] = torch.cat(
+                        (
+                            a[k][:, :1],
+                            a[k][:, 1 + prompts:]
+                        ),
+                        dim=1
+                    )
+
             kvs.append(a)
 
         return kvs
 
 
 class VisionTransformer(nn.Module):
-    def __init__(self, input_resolution: int, patch_size: int, width: int, layers: int, heads: int, output_dim: int):
+    def __init__(self, input_resolution: int, patch_size: int, width: int, layers: int, heads: int, output_dim: int, prompts: int = 20):
         super().__init__()
         self.input_resolution = input_resolution
         self.output_dim = output_dim
@@ -273,6 +300,12 @@ class VisionTransformer(nn.Module):
         self.ln_post = LayerNorm(width)
         self.proj = nn.Parameter(scale * torch.randn(width, output_dim))
 
+        self.prompts = prompts
+        self.prompt_drop = nn.Dropout()
+        val = math.sqrt(6. / (3 * patch_size**2 + 1) + width)
+        self.prompt_embeddings = nn.Parameter(scale * torch.zeros(self.layers, self.prompts, width))
+        nn.init.uniform_(self.prompt_embeddings.data, -val, val)  # xavier_uniform initialization
+
     def forward(self, x: torch.Tensor, with_out=False, with_q=False):
         x = self.conv1(x)  # shape = [*, width, grid, grid]
         x = x.reshape(x.shape[0], x.shape[1], -1)  # shape = [*, width, grid ** 2]
@@ -291,7 +324,9 @@ class VisionTransformer(nn.Module):
         x = x + self.positional_embedding.to(x.dtype)
         x = self.ln_pre(x)
 
-        return self.transformer(x, with_out, with_q)
+        prompts_embeddings = self.ln_pre(self.prompt_drop(self.prompt_embeddings))
+
+        return self.transformer(x, prompts_embeddings, with_out, with_q)
 
 
 class CLIP(nn.Module):
@@ -307,7 +342,8 @@ class CLIP(nn.Module):
                  vocab_size: int,
                  transformer_width: int,
                  transformer_heads: int,
-                 transformer_layers: int
+                 transformer_layers: int,
+                 **kargs
                  ):
         super().__init__()
 
@@ -320,7 +356,8 @@ class CLIP(nn.Module):
                 output_dim=embed_dim,
                 heads=vision_heads,
                 input_resolution=image_resolution,
-                width=vision_width
+                width=vision_width,
+                **kargs
             )
         else:
             vision_heads = vision_width // 64
@@ -330,7 +367,8 @@ class CLIP(nn.Module):
                 width=vision_width,
                 layers=vision_layers,
                 heads=vision_heads,
-                output_dim=embed_dim
+                output_dim=embed_dim,
+                **kargs
             )
 
         self.transformer = Transformer(
@@ -450,7 +488,7 @@ def convert_weights(model: nn.Module):
     model.apply(_convert_weights_to_fp16)
 
 
-def build_model(state_dict: dict):
+def build_model(state_dict: dict, **kargs):
     vit = "visual.proj" in state_dict
 
     if vit:
@@ -484,7 +522,8 @@ def build_model(state_dict: dict):
     model = CLIP(
         embed_dim,
         image_resolution, vision_layers, vision_width, vision_patch_size,
-        context_length, vocab_size, transformer_width, transformer_heads, transformer_layers
+        context_length, vocab_size, transformer_width, transformer_heads, transformer_layers,
+        **kargs
     )
 
     for key in ["input_resolution", "context_length", "vocab_size"]:
@@ -492,5 +531,5 @@ def build_model(state_dict: dict):
             del state_dict[key]
 
     convert_weights(model)
-    model.load_state_dict(state_dict)
+    model.load_state_dict(state_dict, strict=False)
     return model.eval()
