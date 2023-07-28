@@ -377,11 +377,10 @@ class FFPP(Dataset):
                     )
             else:
                 if "normal" in config.augmentation:
-                    self.sequence_augmentation = alb.ReplayCompose(
-                        [
-                            # alb.Resize(
-                            #     self.n_px, self.n_px,cv2.INTER_CUBIC
-                            # ),
+                    augmentations =  [
+                            alb.Resize(
+                                self.n_px, self.n_px,cv2.INTER_CUBIC
+                            ),
                             alb.RGBShift(
                                 (-20, 20), (-20, 20), (-20, 20), p=0.3
                             ),
@@ -393,31 +392,41 @@ class FFPP(Dataset):
                             ),
                             alb.ImageCompression(
                                 quality_lower=40, quality_upper=100, p=0.5
+                            )
+                    ]
+
+                    if "rrc" in config.augmentation:
+                        augmentations += [
+                             alb.RandomResizedCrop(
+                                self.n_px, self.n_px, scale=(0.5, 0.8), ratio=(1, 1),p=0.5
                             ),
-                            # alb.RandomResizedCrop(
-                            #             self.n_px, self.n_px, scale=(0.5, 0.8), ratio=(1, 1),p=0.8
-                            # ),
-                            # alb.Compose(
-                            #     [
-                            #         alb.RandomScale(
-                            #             (-0.5,-0.1),always_apply=True
-                            #         ),
-                            #         alb.Resize(
-                            #             self.n_px, self.n_px, cv2.INTER_CUBIC, always_apply=True
-                            #         )
-                            #     ],p=0.5
-                            # ),
-                            alb.HorizontalFlip()
-                        ],
+                            alb.Compose(
+                                [
+                                    alb.RandomScale(
+                                        (-0.5,-0.1),always_apply=True
+                                    ),
+                                    alb.Resize(
+                                        self.n_px, self.n_px, cv2.INTER_CUBIC, always_apply=True
+                                    )
+                                ],p=0.5
+                            ),
+                        ]
+                        
+                    augmentations += [
+                        alb.HorizontalFlip()
+                    ]
+
+                    self.sequence_augmentation = alb.ReplayCompose(
+                        augmentations,
                         p=1.
                     )
 
                 if "frame" in config.augmentation:
                     self.frame_augmentation = alb.ReplayCompose(
                         [
-                            # alb.Resize(
-                            #     self.n_px, self.n_px,cv2.INTER_CUBIC
-                            # ),
+                            alb.Resize(
+                                self.n_px, self.n_px,cv2.INTER_CUBIC
+                            ),
                             alb.RGBShift(
                                 (-5, 5), (-5, 5), (-5, 5), p=0.3
                             ),

@@ -107,6 +107,10 @@ def auc_roc(weight=None, label_smoothing=0.0, *args, **kargs):
         )
     return driver
 
+def enable_gradients(module: nn.Module):
+    for params in module.parameters():
+        params.requires_grad = True
+    return module
 
 def disable_gradients(module: nn.Module):
     for params in module.parameters():
@@ -596,7 +600,7 @@ class Detector(nn.Module):
         config.foundation = int(Foundations[config.foundation.upper()])
         assert config.foundation == Foundations.CLIP
 
-        assert type(config.num_prompts) == int and config.num_prompts > 0
+        assert type(config.num_prompts) == int
 
         assert type(config.num_classes) == int and config.num_classes > 0
 
@@ -1245,6 +1249,8 @@ class VPT(nn.Module):
         C.weight_decay = 0.01
         # optimizer
         C.optimizer = Optimizers.SGD.name.lower()
+        # attention
+        C.attn_record = False
         return C
 
     @staticmethod
@@ -1252,7 +1258,7 @@ class VPT(nn.Module):
         config = config.clone()
         config.defrost()
 
-        assert type(config.num_prompts) == int and config.num_prompts > 0
+        assert type(config.num_prompts) == int
 
         assert type(config.out_dim) == list
 
@@ -1265,6 +1271,9 @@ class VPT(nn.Module):
         assert 0 <= config.weight_decay <= 1
 
         config.optimizer = int(Optimizers[config.optimizer.upper()])
+
+        assert type(config.attn_record) == bool
+
         config.freeze()
         return config
 
@@ -1276,10 +1285,12 @@ class VPT(nn.Module):
             self.encoder = disable_gradients(
                 clip.load(
                     config.architecture,
-                    prompts=config.num_prompts
+                    prompts=config.num_prompts,
+                    attn_record=config.attn_record
                 )[0].visual.float()
             )
-            self.encoder.prompt_embeddings.requires_grad_(True)
+            if(self.encoder.prompts > 0):
+                self.encoder.prompt_embeddings.requires_grad_(True)
 
         self.out_dim = config.out_dim
         self.weight_decay = config.weight_decay
@@ -1370,5 +1381,6 @@ class VPT(nn.Module):
         super().train(mode)
         if (mode):
             self.encoder.eval()
-            self.encoder.prompt_drop.train()
+            if(self.encoder.prompts > 0):
+                self.encoder.prompt_drop.train()
         return self

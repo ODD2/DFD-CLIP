@@ -1,5 +1,5 @@
 data:
-  clip_duration: 5
+  clip_duration: 4
   eval:
   - augmentation: none
     category: Deepfake
@@ -28,7 +28,7 @@ data:
     pack: false
     root_dir: ./datasets/cdf/
     scale: 1.0
-  num_frames: 1
+  num_frames: 20
   train:
   - augmentation: normal+frame
     category: Deepfake
@@ -48,7 +48,7 @@ data:
     - F2F
     - NT
 evaluator:
-  batch_size: 120
+  batch_size: 24
   metrics:
   - name: deepfake/ffpp
     types:
@@ -62,45 +62,63 @@ evaluator:
     types:
     - accuracy
     - roc_auc
-  name: VPTEvaluator
+  name: Evaluator
   num_workers: 8
 model:
-  num_prompts: 50
+  num_prompts: 0
+  num_classes: 2
+  adapter:
+    frozen: false
+    struct:
+      type: 768-x-768-nln
+      x: 256
+    type: normal
   architecture: ViT-B/16
+  encoder_weight: "logs/test/iconic-durian-1140/best_weights.pt"
+  decode_mode: 
+    type: index
+    indices: [6,7,8,9,10,11]
+  op_mode:
+    attn_mode: "frame"
+    attn_driver: ["smax"]
+  train_mode:
+    query_guide:
+      type: normal
+      key: k
+      parts: ["lips", "skin"]
+      num_layers: 6
+      path: "./misc/semantic_patches.pickle"
   dropout: 0.5
   losses:
   - auc_roc
-  name: VPT
+  name: Detector
   out_dim:
   - 2
   weight_decay: 0.01
-  optimizer: adamw
 system:
   deterministic_training: true
-  evaluation_interval: 500
+  evaluation_interval: 300
   mixed_precision: 'no'
   seed: 0
   training_eval_interval: 10
 tracking:
-  compare_fn: min
+  compare_fn: max
   default_project_prefix: version
   directory: logs/deepfake
   enabled: true
-  main_metric: loss/deepfake/ffpp
+  main_metric: deepfake/ffpp/roc_auc
   project_name: deepfake
   tool: wandb
 trainer:
-  early_stop: 5
-  batch_size: 45
-  learning_rate: 0.01
-  max_steps: 6000
+  batch_size: 12
+  learning_rate: 0.003
+  max_steps: 3000
   metrics:
   - name: deepfake/ffpp
     types:
     - accuracy
     - roc_auc
-  mode: 
+  mode:
     type: normal
-  name: VPTTrainer
-  lr_scheduler: linear
+  name: Trainer
   num_workers: 8

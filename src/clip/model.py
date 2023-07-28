@@ -174,7 +174,7 @@ class MultiheadAttention(nn.Module):
     Simple reimplementation of nn.MultiheadAttention with key, value return
     '''
 
-    def __init__(self, embed_dim, n_head):
+    def __init__(self, embed_dim, n_head, attn_record=False):
         super().__init__()
 
         self.in_proj_weight = nn.Parameter(torch.empty((3 * embed_dim, embed_dim)))
@@ -182,6 +182,9 @@ class MultiheadAttention(nn.Module):
         self.out_proj = nn.Linear(embed_dim, embed_dim)
 
         self.n_head = n_head
+
+        self.attn_record = attn_record
+        self.aff = None
 
     def forward(self, q, *_, **__):
         q, k, v = F.linear(q, self.in_proj_weight, self.in_proj_bias).chunk(3, dim=-1)
@@ -197,14 +200,17 @@ class MultiheadAttention(nn.Module):
 
         out = self.out_proj(mix.flatten(-2))
 
+        if self.attn_record:
+            self.aff = aff
+
         return dict(q=q, k=k, v=v, out=out)
 
 
 class ResidualAttentionBlock(nn.Module):
-    def __init__(self, d_model: int, n_head: int, attn_mask: torch.Tensor = None):
+    def __init__(self, d_model: int, n_head: int, attn_mask: torch.Tensor = None, attn_record: bool=False):
         super().__init__()
 
-        self.attn = MultiheadAttention(d_model, n_head)
+        self.attn = MultiheadAttention(d_model, n_head, attn_record=attn_record)
         self.ln_1 = LayerNorm(d_model)
         self.mlp = nn.Sequential(OrderedDict([
             ("c_fc", nn.Linear(d_model, d_model * 4)),
@@ -228,32 +234,41 @@ class ResidualAttentionBlock(nn.Module):
 
 
 class Transformer(nn.Module):
-    def __init__(self, width: int, layers: int, heads: int, attn_mask: torch.Tensor = None):
+    def __init__(self, width: int, layers: int, heads: int, attn_mask: torch.Tensor = None, attn_record: bool = False):
         super().__init__()
         self.width = width
         self.layers = layers
-        self.resblocks = nn.Sequential(*[ResidualAttentionBlock(width, heads, attn_mask) for _ in range(layers)])
+        self.resblocks = nn.Sequential(*[ResidualAttentionBlock(width, heads, attn_mask, attn_record=attn_record) for _ in range(layers)])
 
     def forward(self, x: torch.Tensor, prompt_embeddings: torch.Tensor, with_out=False, with_q=False, with_prompt=False):
         # key and value from each layer
         kvs = []
-        prompts = prompt_embeddings.shape[1]
+        if(type(prompt_embeddings) == type(None)):
+            prompts = -1
+        else:
+            prompts = prompt_embeddings.shape[1]
+            
+
+        assert not with_prompt or (prompts > 0), "cannot acquire features with prompt without prompting"
 
         for i, blk in enumerate(self.resblocks):
-            prompt_memory = (
-                prompt_embeddings[i].unsqueeze(0).expand(x.shape[0], -1, -1) +
-                (0 if i == 0 else x[:, 1: 1 + prompts])
-            )
-            a = blk(
-                torch.cat(
-                    [
-                        x[:, :1],
-                        prompt_memory,
-                        x[:, (1 if i == 0 else (prompts + 1)):]
-                    ],
-                    dim=1
+            if prompts > 0:
+                prompt_memory = (
+                    prompt_embeddings[i].unsqueeze(0).expand(x.shape[0], -1, -1) +
+                    (0 if i == 0 else x[:, 1: 1 + prompts])
                 )
-            )
+                a = blk(
+                    torch.cat(
+                        [
+                            x[:, :1],
+                            prompt_memory,
+                            x[:, (1 if i == 0 else (prompts + 1)):]
+                        ],
+                        dim=1
+                    )
+                )
+            else:
+                a = blk(x)
 
             if (with_out):
                 x = a['out']
@@ -263,7 +278,7 @@ class Transformer(nn.Module):
             if (not with_q):
                 a.pop('q')
 
-            if (not with_prompt):
+            if (prompts > 0 and not with_prompt):
                 for k in a:
                     a[k] = torch.cat(
                         (
@@ -279,7 +294,7 @@ class Transformer(nn.Module):
 
 
 class VisionTransformer(nn.Module):
-    def __init__(self, input_resolution: int, patch_size: int, width: int, layers: int, heads: int, output_dim: int, prompts: int = 20):
+    def __init__(self, input_resolution: int, patch_size: int, width: int, layers: int, heads: int, output_dim: int, prompts: int = 20, attn_record: bool=False):
         super().__init__()
         self.input_resolution = input_resolution
         self.output_dim = output_dim
@@ -295,18 +310,22 @@ class VisionTransformer(nn.Module):
         self.positional_embedding = nn.Parameter(scale * torch.randn((input_resolution // patch_size) ** 2 + 1, width))
         self.ln_pre = LayerNorm(width)
 
-        self.transformer = Transformer(width, layers, heads)
+        self.transformer = Transformer(width, layers, heads, attn_record=attn_record)
 
         self.ln_post = LayerNorm(width)
         self.proj = nn.Parameter(scale * torch.randn(width, output_dim))
 
         self.prompts = prompts
-        self.prompt_drop = nn.Dropout()
-        val = math.sqrt(6. / (3 * patch_size**2 + 1) + width)
-        self.prompt_embeddings = nn.Parameter(scale * torch.zeros(self.layers, self.prompts, width))
-        nn.init.uniform_(self.prompt_embeddings.data, -val, val)  # xavier_uniform initialization
 
-    def forward(self, x: torch.Tensor, with_out=False, with_q=False):
+        if self.prompts > 0:
+            self.prompt_drop = nn.Dropout()
+            val = math.sqrt(6. / (3 * patch_size**2 + 1) + width)
+            self.prompt_embeddings = nn.Parameter(scale * torch.zeros(self.layers, self.prompts, width))
+            nn.init.uniform_(self.prompt_embeddings.data, -val, val)  # xavier_uniform initialization
+        else:
+            self.prompt_embeddings = None
+
+    def forward(self, x: torch.Tensor, with_out=False, with_q=False,with_prompt=False):
         x = self.conv1(x)  # shape = [*, width, grid, grid]
         x = x.reshape(x.shape[0], x.shape[1], -1)  # shape = [*, width, grid ** 2]
         x = x.permute(0, 2, 1)  # shape = [*, grid ** 2, width]
@@ -324,9 +343,12 @@ class VisionTransformer(nn.Module):
         x = x + self.positional_embedding.to(x.dtype)
         x = self.ln_pre(x)
 
-        prompts_embeddings = self.ln_pre(self.prompt_drop(self.prompt_embeddings))
+        if self.prompts > 0:
+            prompts_embeddings = self.ln_pre(self.prompt_drop(self.prompt_embeddings))
+        else:
+            prompts_embeddings = None
 
-        return self.transformer(x, prompts_embeddings, with_out, with_q)
+        return self.transformer(x, prompts_embeddings, with_out, with_q, with_prompt)
 
 
 class CLIP(nn.Module):
