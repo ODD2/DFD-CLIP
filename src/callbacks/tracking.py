@@ -24,7 +24,7 @@ def update_trackers(agent):
 
 @torch.no_grad()
 def cache_best_model(agent):
-    target_metrics = [value for name, value in agent.compute_metrics.items() if re.search(agent.main_metric, name)]
+    target_metrics = [value for name, value in agent.phase_metrics.items() if re.search(agent.main_metric, name)]
     if (len(target_metrics) > 0):
         main_metric = sum(target_metrics) / max(len(target_metrics), 1)
         current_best = getattr(agent, 'best_main_metric', main_metric)

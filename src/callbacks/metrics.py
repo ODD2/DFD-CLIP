@@ -120,23 +120,21 @@ def update_metrics(agent):
 def compute_metrics(agent):
     if agent.steps % agent.training_eval_interval:
         return
-    agent.compute_losses = {}
-    agent.compute_metrics = {}
-
-    # compute metrics
-    for lname in agent.calcs.keys():
-        for mname, metric in agent.calcs[lname].items():
-            agent.compute_metrics[f"metric/{lname}/{mname}"] = metric.compute()[mname]
+    agent.phase_metrics = {}
 
     # compute losses
     for lname in agent.losses.keys():
-        agent.compute_losses[f"loss/{lname}"] = sum(agent.losses[lname]) / len(agent.losses[lname])
+        agent.phase_metrics[f"loss/{lname}"] = sum(agent.losses[lname]) / len(agent.losses[lname])
         agent.losses[lname].clear()
+
+    # compute additional metrics
+    for lname in agent.calcs.keys():
+        for mname, metric in agent.calcs[lname].items():
+            agent.phase_metrics[f"metric/{lname}/{mname}"] = metric.compute()[mname]
 
     logging.info(
         {
-            **agent.compute_losses,
-            **agent.compute_metrics
+            **agent.phase_metrics
         }
     )
 
@@ -144,11 +142,7 @@ def compute_metrics(agent):
         {
             **{
                 f'{type(agent).__name__}/{lname}'.lower(): value
-                for lname, value in agent.compute_losses.items()
-            },
-            **{
-                f'{type(agent).__name__}/{mname}'.lower(): value
-                for mname, value in agent.compute_metrics.items()
+                for lname, value in agent.phase_metrics.items()
             },
         },
         step=agent.steps
