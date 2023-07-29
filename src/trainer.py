@@ -296,7 +296,7 @@ class Trainer(_Trainer):
 
             if (
                 self.steps >= self.config.max_steps or
-                (self.config.early_stop > 0 and self.early_stop_counter > self.config.early_stop)
+                (self.config.early_stop > 0 and self.early_stop_counter >= self.config.early_stop)
             ):
                 self.trigger_callbacks('on_training_end')
                 return
@@ -451,7 +451,7 @@ class VPTTrainer(Trainer):
 
             if (
                 self.steps >= self.config.max_steps or
-                (self.config.early_stop > 0 and self.early_stop_counter > self.config.early_stop)
+                (self.config.early_stop > 0 and self.early_stop_counter >= self.config.early_stop)
             ):
                 self.trigger_callbacks('on_training_end')
                 return
