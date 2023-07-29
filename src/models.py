@@ -107,10 +107,12 @@ def auc_roc(weight=None, label_smoothing=0.0, *args, **kargs):
         )
     return driver
 
+
 def enable_gradients(module: nn.Module):
     for params in module.parameters():
         params.requires_grad = True
     return module
+
 
 def disable_gradients(module: nn.Module):
     for params in module.parameters():
@@ -1244,6 +1246,7 @@ class VPT(nn.Module):
         C.out_dim = []
         C.losses = []
         C.num_prompts = 20
+        C.prompt_mode = "deepc"
         # regularization
         C.dropout = 0.0
         C.weight_decay = 0.01
@@ -1251,6 +1254,16 @@ class VPT(nn.Module):
         C.optimizer = Optimizers.SGD.name.lower()
         # attention
         C.attn_record = False
+        # train mode
+        C.train_mode = CN()
+        # > query guide
+        C.train_mode.query_guide = CN()
+        C.train_mode.query_guide.type = QueryGuideMode.NONE.name.lower()
+        # - for normal mode
+        C.train_mode.query_guide.path = ""
+        C.train_mode.query_guide.key = ""
+        C.train_mode.query_guide.parts = []
+        C.train_mode.query_guide.num_layers = -1
         return C
 
     @staticmethod
@@ -1259,6 +1272,8 @@ class VPT(nn.Module):
         config.defrost()
 
         assert type(config.num_prompts) == int
+
+        assert type(config.prompt_mode) == str
 
         assert type(config.out_dim) == list
 
@@ -1274,6 +1289,14 @@ class VPT(nn.Module):
 
         assert type(config.attn_record) == bool
 
+        config.train_mode.query_guide.type = int(QueryGuideMode[config.train_mode.query_guide.type.upper()])
+        if config.train_mode.query_guide.type == QueryGuideMode.NORMAL:
+            assert config.num_prompts > 0
+            assert len(config.train_mode.query_guide.path) > 0
+            assert len(config.train_mode.query_guide.key) > 0
+            assert len(config.train_mode.query_guide.parts) > 0
+            assert config.train_mode.query_guide.num_layers > 0
+
         config.freeze()
         return config
 
@@ -1286,10 +1309,11 @@ class VPT(nn.Module):
                 clip.load(
                     config.architecture,
                     prompts=config.num_prompts,
+                    prompt_mode=config.prompt_mode,
                     attn_record=config.attn_record
                 )[0].visual.float()
             )
-            if(self.encoder.prompts > 0):
+            if (self.encoder.prompts > 0):
                 self.encoder.prompt_embeddings.requires_grad_(True)
 
         self.out_dim = config.out_dim
@@ -1315,20 +1339,39 @@ class VPT(nn.Module):
         # transformations
         self.transform = self._transform(self.encoder.input_resolution)
 
+        # training requirements
+        if (self.config.train_mode.query_guide.type == QueryGuideMode.NORMAL):
+            file_path = self.config.train_mode.query_guide.path
+            parts = self.config.train_mode.query_guide.parts
+            key = self.config.train_mode.query_guide.key
+            with open(file_path, "rb") as f:
+                prefetch_queries = pickle.load(f)
+                self.semantic_queries = []
+                for i in range(self.encoder.layers):
+                    layer_results = []
+                    for part in parts:
+                        layer_results.append(prefetch_queries[key][part][i])
+                    self.semantic_queries.append(torch.stack(layer_results))
+                self.semantic_queries = torch.stack(self.semantic_queries)
+                self.semantic_queries.requires_grad_(False)
+
     def predict(self, x):
         b, t, c, h, w = x.shape
 
         # get key and value from each CLIP ViT layer
-        kvs = self.encoder(x.flatten(0, 1), with_out=True)
+        kvs = self.encoder(x.flatten(0, 1), with_out=True, with_q=True, with_prompt=True)
 
-        task_logits = [self.cls_ln(self.cls_drop(kvs[-1]["out"][:, 0])) @ m for m in self.task_proj]
+        task_logits = [
+            self.cls_ln(self.cls_drop(kvs[-1]["out"][:, 0])) @ m
+            for m in self.task_proj
+        ]
         # task_logits = [self.cls_ln(kvs[-1]["out"][:, 0]) @ m for m in self.task_proj]
 
         for i in range(len(task_logits)):
             logits_l2_distance = torch.norm(task_logits[i], dim=-1, keepdim=True)
             task_logits[i] = 5 * task_logits[i] / (logits_l2_distance + 1e-10)
 
-        return task_logits, None
+        return task_logits, {"kvs": kvs}
 
     def forward(self, x, y, m, comp=None, speed=None, train=False, single_task=None, *args, **kargs):
         device = x.device
@@ -1345,6 +1388,51 @@ class VPT(nn.Module):
             return task_losses, task_logits
 
         other_losses = {}
+
+        # TODO: find the best setting for VPT.
+        if not self.config.train_mode.query_guide.type == QueryGuideMode.NONE:
+            if self.config.train_mode.query_guide.type == QueryGuideMode.NORMAL:
+                # create stack of features for layer wise prompt tuning parameters.
+                kvs = features["kvs"]
+                layer_prompt_ks = torch.stack(
+                    [kv["q"][:, 1:1+self.encoder.prompts].flatten(-2) for kv in kvs],
+                    dim=1
+                )
+
+                cls_part_layer = self.config.train_mode.query_guide.num_layers
+                if (cls_part_layer < self.encoder.layers):
+                    other_losses["cls_div"] = (
+                        torch.sum(
+                            torch.nn.functional.cosine_similarity(
+                                layer_prompt_ks[:, cls_part_layer:].unsqueeze(3),
+                                layer_prompt_ks[:, cls_part_layer:].unsqueeze(2),
+                                dim=-1
+                            ).abs().mean(3),
+                            dim=-1
+                        ) - 1
+                    ).mean(1)
+                if (cls_part_layer > 0):
+                    num_prompts = self.encoder.prompts
+                    num_queries = self.semantic_queries.shape[1]
+                    repeat_spread_semantic_queries = torch.cat(
+                        (
+                            self.semantic_queries[:cls_part_layer].repeat((1, num_prompts//num_queries, 1)),
+                            self.semantic_queries[:cls_part_layer, :(num_prompts % num_queries)]
+                        ),
+                        dim=1
+                    )
+                    other_losses["cls_sim"] = (
+                        torch.sum(
+                            (
+                                1 - torch.nn.functional.cosine_similarity(
+                                    layer_prompt_ks[:, :cls_part_layer],
+                                    repeat_spread_semantic_queries.to(layer_prompt_ks.device),
+                                    dim=-1
+                                )
+                            ) / 2,
+                            dim=-1
+                        ).mean(1)
+                    )
 
         return task_losses, task_logits, other_losses
 
@@ -1381,6 +1469,6 @@ class VPT(nn.Module):
         super().train(mode)
         if (mode):
             self.encoder.eval()
-            if(self.encoder.prompts > 0):
+            if (self.encoder.prompts > 0):
                 self.encoder.prompt_drop.train()
         return self
