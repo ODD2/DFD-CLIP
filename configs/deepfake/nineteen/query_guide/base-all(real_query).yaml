@@ -85,7 +85,7 @@ model:
       key: k
       parts: ["lips", "skin"]
       num_layers: 6
-      path: "./misc/semantic_patches_v2_1000.pickle"
+      path: "./misc/real_semantic_patches_v2_1000.pickle"
   dropout: 0.5
   losses:
   - auc_roc

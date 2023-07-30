@@ -11,23 +11,24 @@ data:
     pack: false
     pair: false
     root_dir: ./datasets/ffpp/
-    scale: 1.0
+    #!!!
+    scale: 0.1
     types:
     - REAL
     - DF
     - FS
     - F2F
     - NT
-  - category: Deepfake
-    name: DFDC
-    pack: false
-    root_dir: ./datasets/dfdc/
-    scale: 0.1
-  - category: Deepfake
-    name: CDF
-    pack: false
-    root_dir: ./datasets/cdf/
-    scale: 1.0
+  # - category: Deepfake
+  #   name: DFDC
+  #   pack: false
+  #   root_dir: ./datasets/dfdc/
+  #   scale: 0.1
+  # - category: Deepfake
+  #   name: CDF
+  #   pack: false
+  #   root_dir: ./datasets/cdf/
+  #   scale: 1.0
   num_frames: 20
   train:
   - augmentation: normal+frame
@@ -54,18 +55,17 @@ evaluator:
     types:
     - accuracy
     - roc_auc
-  - name: deepfake/cdf
-    types:
-    - accuracy
-    - roc_auc
-  - name: deepfake/dfdc
-    types:
-    - accuracy
-    - roc_auc
+  # - name: deepfake/cdf
+  #   types:
+  #   - accuracy
+  #   - roc_auc
+  # - name: deepfake/dfdc
+  #   types:
+  #   - accuracy
+  #   - roc_auc
   name: Evaluator
   num_workers: 8
 model:
-  num_classes: 2
   adapter:
     frozen: false
     struct:
@@ -79,13 +79,6 @@ model:
   op_mode:
     attn_mode: "frame"
     attn_driver: ["smax"]
-  train_mode:
-    query_guide:
-      type: normal
-      key: k
-      parts: ["lips", "skin"]
-      num_layers: 6
-      path: "./misc/semantic_patches_v2_1000.pickle"
   dropout: 0.5
   losses:
   - auc_roc
@@ -95,16 +88,19 @@ model:
   weight_decay: 0.01
 system:
   deterministic_training: true
-  evaluation_interval: 300
+  #!!!
+  evaluation_interval: 30
   mixed_precision: 'no'
   seed: 0
   training_eval_interval: 10
 tracking:
-  compare_fn: max
+  #!!!
+  compare_fn: min
   default_project_prefix: version
   directory: logs/deepfake
   enabled: true
-  main_metric: deepfake/ffpp/roc_auc
+  #!!!
+  main_metric: loss/deepfake/ffpp
   project_name: deepfake
   tool: wandb
 trainer:

@@ -13,11 +13,8 @@ data:
     root_dir: ./datasets/ffpp/
     scale: 1.0
     types:
-    - REAL
-    - DF
-    - FS
-    - F2F
-    - NT
+      - REAL
+      - NT
   - category: Deepfake
     name: DFDC
     pack: false
@@ -42,11 +39,10 @@ data:
     root_dir: ./datasets/ffpp/
     scale: 1.0
     types:
-    - REAL
-    - DF
-    - FS
-    - F2F
-    - NT
+      - REAL
+      - DF
+      - FS
+      - F2F
 evaluator:
   batch_size: 24
   metrics:
@@ -75,7 +71,7 @@ model:
   architecture: ViT-B/16
   decode_mode: 
     type: index
-    indices: [6,7,8,9,10,11]
+    indices: [1,3,5,7,9,11]
   op_mode:
     attn_mode: "frame"
     attn_driver: ["smax"]
