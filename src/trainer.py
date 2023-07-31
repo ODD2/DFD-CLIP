@@ -113,7 +113,7 @@ class Trainer(_Trainer):
             self.lr_scheduler = LinearLR(
                 optimizer=self.optimizer,
                 start_factor=0.04,
-                total_iters=(config.max_steps/3)
+                total_iters=min((config.max_steps / 3), 1000)
             )
 
         # pre-cache number of tasks before distributed learning for further usage

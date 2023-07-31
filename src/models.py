@@ -515,7 +515,7 @@ class Detector(nn.Module):
         C.encoder_weight = ""
 
         # number of prompts
-        C.num_prompts = 50
+        C.num_prompts = 0
 
         # number of classes
         C.num_classes = 1

@@ -377,41 +377,41 @@ class FFPP(Dataset):
                     )
             else:
                 if "normal" in config.augmentation:
-                    augmentations =  [
-                            alb.Resize(
-                                self.n_px, self.n_px,cv2.INTER_CUBIC
-                            ),
-                            alb.RGBShift(
-                                (-20, 20), (-20, 20), (-20, 20), p=0.3
-                            ),
-                            alb.HueSaturationValue(
-                                hue_shift_limit=(-0.3, 0.3), sat_shift_limit=(-0.3, 0.3), val_shift_limit=(-0.3, 0.3), p=0.3
-                            ),
-                            alb.RandomBrightnessContrast(
-                                brightness_limit=(-0.3, 0.3), contrast_limit=(-0.3, 0.3), p=0.3
-                            ),
-                            alb.ImageCompression(
-                                quality_lower=40, quality_upper=100, p=0.5
-                            )
+                    augmentations = [
+                        alb.Resize(
+                            self.n_px, self.n_px, cv2.INTER_CUBIC
+                        ),
+                        alb.RGBShift(
+                            (-20, 20), (-20, 20), (-20, 20), p=0.3
+                        ),
+                        alb.HueSaturationValue(
+                            hue_shift_limit=(-0.3, 0.3), sat_shift_limit=(-0.3, 0.3), val_shift_limit=(-0.3, 0.3), p=0.3
+                        ),
+                        alb.RandomBrightnessContrast(
+                            brightness_limit=(-0.3, 0.3), contrast_limit=(-0.3, 0.3), p=0.3
+                        ),
+                        alb.ImageCompression(
+                            quality_lower=40, quality_upper=100, p=0.5
+                        )
                     ]
 
                     if "rrc" in config.augmentation:
                         augmentations += [
-                             alb.RandomResizedCrop(
-                                self.n_px, self.n_px, scale=(0.5, 0.8), ratio=(1, 1),p=0.5
+                            alb.RandomResizedCrop(
+                                self.n_px, self.n_px, scale=(0.4, 0.9), ratio=(1, 1), p=1.0
                             ),
                             alb.Compose(
                                 [
                                     alb.RandomScale(
-                                        (-0.5,-0.1),always_apply=True
+                                        (-0.5, -0.1), always_apply=True
                                     ),
                                     alb.Resize(
                                         self.n_px, self.n_px, cv2.INTER_CUBIC, always_apply=True
                                     )
-                                ],p=0.5
+                                ], p=0.5
                             ),
                         ]
-                        
+
                     augmentations += [
                         alb.HorizontalFlip()
                     ]
@@ -425,7 +425,7 @@ class FFPP(Dataset):
                     self.frame_augmentation = alb.ReplayCompose(
                         [
                             alb.Resize(
-                                self.n_px, self.n_px,cv2.INTER_CUBIC
+                                self.n_px, self.n_px, cv2.INTER_CUBIC
                             ),
                             alb.RGBShift(
                                 (-5, 5), (-5, 5), (-5, 5), p=0.3
