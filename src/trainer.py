@@ -101,11 +101,13 @@ class Trainer(_Trainer):
 
         # prepare learning rate schedulers
         if config.lr_scheduler == LRScheduler.ONECYCLE:
+            total_steps = (config.max_steps * self.accelerator.state.num_processes)
             self.optimizer = model.configure_optimizers(config.learning_rate / 25)
             self.lr_scheduler = OneCycleLR(
                 optimizer=self.optimizer,
                 max_lr=config.learning_rate,
-                total_steps=(config.max_steps * self.accelerator.state.num_processes)
+                pct_start=min(0.3, 900/total_steps),
+                total_steps=total_steps
             )
 
         elif config.lr_scheduler == LRScheduler.LINEAR:
@@ -333,10 +335,12 @@ class VPTTrainer(Trainer):
         self.model = model
         if config.lr_scheduler == LRScheduler.ONECYCLE:
             self.optimizer = model.configure_optimizers(config.learning_rate / 25)
+            total_steps = (config.max_steps * self.accelerator.state.num_processes)
             self.lr_scheduler = OneCycleLR(
                 optimizer=self.optimizer,
                 max_lr=config.learning_rate,
-                total_steps=(config.max_steps * self.accelerator.state.num_processes)
+                pct_start=min(0.3, 900/total_steps),
+                total_steps=total_steps
             )
         elif config.lr_scheduler == LRScheduler.LINEAR:
             self.optimizer = model.configure_optimizers(config.learning_rate)

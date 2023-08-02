@@ -66,6 +66,7 @@ evaluator:
   num_workers: 8
 model:
   num_prompts: 20
+  prompt_mode: deep
   architecture: ViT-B/16
   dropout: 0.5
   losses:
@@ -93,8 +94,7 @@ trainer:
   early_stop: 5
   batch_size: 45
   learning_rate: 0.01
-  ##!!!
-  max_steps: 9000
+  max_steps: 15000
   metrics:
   - name: deepfake/ffpp
     types:

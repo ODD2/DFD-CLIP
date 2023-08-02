@@ -81,13 +81,6 @@ model:
   op_mode:
     attn_mode: "frame"
     attn_driver: ["smax"]
-  train_mode:
-    query_guide:
-      type: normal
-      key: k
-      parts: ["lips", "skin"]
-      num_layers: 6
-      path: "./misc/semantic_patches.pickle"
   dropout: 0.5
   losses:
   - auc_roc
