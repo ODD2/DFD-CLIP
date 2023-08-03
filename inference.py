@@ -102,8 +102,8 @@ def main(args):
         with accelerator.main_process_first():
             model.load_state_dict(
                 remap_weight(
-                    model,
-                    torch.load(path.join(root, f'{args.weight_mode}_weights.pt'))
+                    torch.load(path.join(root, f'{args.weight_mode}_weights.pt')),
+                    model
                 )
             )
 

@@ -61,7 +61,7 @@ evaluator:
   name: Evaluator
   num_workers: 8
 model:
-  num_prompts: 20
+  frame_prompts: 20
   num_classes: 2
   adapter:
     frozen: false

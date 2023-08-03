@@ -65,7 +65,7 @@ evaluator:
   name: VPTEvaluator
   num_workers: 8
 model:
-  num_prompts: 0
+  frame_prompts: 0
   architecture: ViT-B/16
   dropout: 0.5
   losses:

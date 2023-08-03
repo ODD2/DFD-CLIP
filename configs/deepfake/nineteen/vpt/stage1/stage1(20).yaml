@@ -65,7 +65,7 @@ evaluator:
   name: VPTEvaluator
   num_workers: 8
 model:
-  num_prompts: 20
+  frame_prompts: 20
   architecture: ViT-B/16
   dropout: 0.5
   losses:
@@ -93,8 +93,7 @@ trainer:
   early_stop: 5
   batch_size: 45
   learning_rate: 0.01
-  ##!!!
-  max_steps: 9000
+  max_steps: 12000
   metrics:
   - name: deepfake/ffpp
     types:

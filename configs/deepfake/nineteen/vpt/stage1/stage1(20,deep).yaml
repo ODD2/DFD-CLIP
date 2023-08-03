@@ -65,7 +65,7 @@ evaluator:
   name: VPTEvaluator
   num_workers: 8
 model:
-  num_prompts: 20
+  frame_prompts: 20
   prompt_mode: deep
   architecture: ViT-B/16
   dropout: 0.5

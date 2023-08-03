@@ -17,23 +17,28 @@ import torchvision.transforms as T
 
 
 def remap_weight(
-        detector,
-        raw_weights
+        raw_weights,
+        model=None
 ):
-    assert type(detector) == Detector
 
     weights = {}
     for k in raw_weights:
-        if k == "decoder.ln_post.weight":
-            weights[f"decoder.proj0x2_L{detector.layer_indices[-1]}.0.weight"] = raw_weights[k]
-        elif k == "decoder.ln_post.bias":
-            weights[f"decoder.proj0x2_L{detector.layer_indices[-1]}.0.bias"] = raw_weights[k]
-        elif k == "decoder.proj0x2":
-            weights[f"decoder.proj0x2_L{detector.layer_indices[-1]}.2.weight"] = raw_weights[k].T
-        elif k == "decoder.class_embedding" and len(raw_weights[k].shape) == 1:
-            weights[k] = raw_weights[k].unsqueeze(0)
+        if (type(model) == Detector):
+            if k == "decoder.ln_post.weight":
+                weights[f"decoder.proj0x2_L{model.layer_indices[-1]}.0.weight"] = raw_weights[k]
+            elif k == "decoder.ln_post.bias":
+                weights[f"decoder.proj0x2_L{model.layer_indices[-1]}.0.bias"] = raw_weights[k]
+            elif k == "decoder.proj0x2":
+                weights[f"decoder.proj0x2_L{model.layer_indices[-1]}.2.weight"] = raw_weights[k].T
+            elif k == "decoder.class_embedding" and len(raw_weights[k].shape) == 1:
+                weights[k] = raw_weights[k].unsqueeze(0)
+            else:
+                weights[k] = raw_weights[k]
         else:
-            weights[k] = raw_weights[k]
+            if k == "prompt_embeddings":
+                weights[f"frame_prompt_embeddings"] = raw_weights[k]
+            else:
+                weights[k] = raw_weights[k]
 
     return weights
 
@@ -515,7 +520,8 @@ class Detector(nn.Module):
         C.encoder_weight = ""
 
         # number of prompts
-        C.num_prompts = 0
+        C.frame_prompts = 0
+        C.video_prompts = 0
 
         # number of classes
         C.num_classes = 1
@@ -567,6 +573,8 @@ class Detector(nn.Module):
         C.train_mode.query_guide.key = ""
         C.train_mode.query_guide.parts = []
         C.train_mode.query_guide.num_layers = -1
+        # - temporal prompt
+        C.train_mode.mixing_prompt = False
 
         # operation mode configurations
         C.op_mode = CN()
@@ -602,7 +610,10 @@ class Detector(nn.Module):
         config.foundation = int(Foundations[config.foundation.upper()])
         assert config.foundation == Foundations.CLIP
 
-        assert type(config.num_prompts) == int
+        assert type(config.frame_prompts) == int
+        assert config.frame_prompts >= 0
+        assert type(config.video_prompts) == int
+        assert config.video_prompts >= 0
 
         assert type(config.num_classes) == int and config.num_classes > 0
 
@@ -650,6 +661,9 @@ class Detector(nn.Module):
             assert len(config.train_mode.query_guide.parts) > 0
             assert config.train_mode.query_guide.num_layers > 0
 
+        assert type(config.train_mode.mixing_prompt) == bool
+        assert not config.train_mode.mixing_prompt or config.frame_prompts > 0
+
         config.op_mode.attn_mode = [int(AttnMode[opt.upper()]) for opt in config.op_mode.attn_mode.split("+")]
         assert type(config.op_mode.attn_driver) == list
         assert type(config.op_mode.temporal_position) == bool
@@ -679,14 +693,13 @@ class Detector(nn.Module):
 
         with accelerator.main_process_first():
             if config.foundation == Foundations.CLIP:
-                self.encoder = disable_gradients(
-                    clip.load(
-                        config.architecture,
-                        prompts=config.num_prompts
-                    )[0].visual.float()
-                )
+                self.encoder = clip.load(
+                    config.architecture,
+                    frame_prompts=config.frame_prompts,
+                    video_prompts=config.video_prompts
+                )[0].visual.float()
             elif config.foundation == Foundations.DINO2:
-                self.encoder = disable_gradients(DINOv2())
+                self.encoder = DINOv2()
             elif config.foundation == Foundations.FARL:
                 _model = clip.load("ViT-B/16")[0]
                 _model.load_state_dict(
@@ -694,14 +707,25 @@ class Detector(nn.Module):
                     strict=False
                 )
                 self.encoder = _model.visual.float()
-                self.encoder = disable_gradients(self.encoder)
 
         if len(self.config.encoder_weight) > 0:
             self.encoder.load_state_dict(
-                {
-                    k[8:]: v for k, v in torch.load(self.config.encoder_weight, map_location="cpu").items() if k[:7] == "encoder"
-                }
+                remap_weight(
+                    {
+                        **{
+                            k[8:]: v for k, v in torch.load(self.config.encoder_weight, map_location="cpu").items() if k[:7] == "encoder"
+                        },
+                        **({k: v for k, v in self.encoder.state_dict().items() if "video_prompt" in k} if self.config.video_prompts > 0 else {})
+                    }
+                )
             )
+
+        self.encoder = disable_gradients(self.encoder)
+
+        if (config.train_mode.mixing_prompt):
+            self.encoder.frame_prompt_embeddings.requires_grad_(True)
+        if (config.video_prompts > 0):
+            self.encoder.video_prompt_embeddings.requires_grad_(True)
 
         self.losses = []
 
@@ -765,15 +789,14 @@ class Detector(nn.Module):
 
     def predict(self, x, m, with_video_features=False, with_adapt_features=False, train=False):
         b, t, c, h, w = x.shape
-        with torch.no_grad():
-            # get key and value from each CLIP ViT layer
-            kvs = self.encoder(x.flatten(0, 1))
-            # discard original CLS token and restore temporal dimension
-            for i in range(len(kvs)):
-                for k in kvs[i]:
-                    kvs[i][k] = kvs[i][k][:, 1:].unflatten(0, (b, t))
-            # discard unwanted layers
-            kvs = [kvs[i] for i in self.layer_indices]
+        # get key and value from each CLIP ViT layer
+        kvs = self.encoder(x.flatten(0, 1))
+        # discard original CLS token and restore temporal dimension
+        for i in range(len(kvs)):
+            for k in kvs[i]:
+                kvs[i][k] = kvs[i][k][:, 1:].unflatten(0, (b, t))
+        # discard unwanted layers
+        kvs = [kvs[i] for i in self.layer_indices]
 
         if train and not self.config.train_mode.patch_mask.type == PatchMaskMode.NONE:
             logging.debug("enter patch masking block.")
@@ -1066,6 +1089,10 @@ class Detector(nn.Module):
         super().train(mode)
         if (mode):
             self.encoder.eval()
+            if (self.config.train_mode.mixing_prompt):
+                self.encoder.frame_prompt_drop.train()
+            if (self.config.video_prompts > 0):
+                self.encoder.video_prompt_drop.train()
         return self
 
 
@@ -1245,7 +1272,7 @@ class VPT(nn.Module):
         C.name = "VPT"
         C.out_dim = []
         C.losses = []
-        C.num_prompts = 20
+        C.frame_prompts = 20
         C.prompt_mode = "deepc"
         # regularization
         C.dropout = 0.0
@@ -1271,7 +1298,7 @@ class VPT(nn.Module):
         config = config.clone()
         config.defrost()
 
-        assert type(config.num_prompts) == int
+        assert type(config.frame_prompts) == int
 
         assert type(config.prompt_mode) == str
 
@@ -1291,7 +1318,7 @@ class VPT(nn.Module):
 
         config.train_mode.query_guide.type = int(QueryGuideMode[config.train_mode.query_guide.type.upper()])
         if config.train_mode.query_guide.type == QueryGuideMode.NORMAL:
-            assert config.num_prompts > 0
+            assert config.frame_prompts > 0
             assert len(config.train_mode.query_guide.path) > 0
             assert len(config.train_mode.query_guide.key) > 0
             assert len(config.train_mode.query_guide.parts) > 0
@@ -1308,13 +1335,13 @@ class VPT(nn.Module):
             self.encoder = disable_gradients(
                 clip.load(
                     config.architecture,
-                    prompts=config.num_prompts,
+                    frame_prompts=config.frame_prompts,
                     prompt_mode=config.prompt_mode,
                     attn_record=config.attn_record
                 )[0].visual.float()
             )
             if (self.encoder.prompts > 0):
-                self.encoder.prompt_embeddings.requires_grad_(True)
+                self.encoder.frame_prompt_embeddings.requires_grad_(True)
 
         self.out_dim = config.out_dim
         self.weight_decay = config.weight_decay
@@ -1412,12 +1439,12 @@ class VPT(nn.Module):
                         ) - 1
                     ).mean(1)
                 if (cls_part_layer > 0):
-                    num_prompts = self.encoder.prompts
+                    frame_prompts = self.encoder.prompts
                     num_queries = self.semantic_queries.shape[1]
                     repeat_spread_semantic_queries = torch.cat(
                         (
-                            self.semantic_queries[:cls_part_layer].repeat((1, num_prompts//num_queries, 1)),
-                            self.semantic_queries[:cls_part_layer, :(num_prompts % num_queries)]
+                            self.semantic_queries[:cls_part_layer].repeat((1, frame_prompts//num_queries, 1)),
+                            self.semantic_queries[:cls_part_layer, :(frame_prompts % num_queries)]
                         ),
                         dim=1
                     )
@@ -1470,5 +1497,5 @@ class VPT(nn.Module):
         if (mode):
             self.encoder.eval()
             if (self.encoder.prompts > 0):
-                self.encoder.prompt_drop.train()
+                self.encoder.frame_prompt_drop.train()
         return self

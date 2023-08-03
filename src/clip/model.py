@@ -319,7 +319,8 @@ class VisionTransformer(nn.Module):
         layers: int,
         heads: int,
         output_dim: int,
-        prompts: int = 20,
+        frame_prompts: int = 0,
+        video_prompts: int = 0,
         prompt_mode: str = "deepc",
         attn_record: bool = False
     ):
@@ -343,16 +344,27 @@ class VisionTransformer(nn.Module):
         self.ln_post = LayerNorm(width)
         self.proj = nn.Parameter(scale * torch.randn(width, output_dim))
 
-        self.prompts = prompts
+        self.frame_prompts = frame_prompts
+        self.video_prompts = video_prompts
+        self.prompts = frame_prompts + video_prompts
+
         self.prompt_mode = prompt_mode
 
-        if self.prompts > 0:
-            self.prompt_drop = nn.Dropout()
+        if self.frame_prompts > 0:
+            self.frame_prompt_drop = nn.Dropout()
             val = math.sqrt(6. / (3 * patch_size**2 + 1) + width)
-            self.prompt_embeddings = nn.Parameter(scale * torch.zeros(self.layers, self.prompts, width))
-            nn.init.uniform_(self.prompt_embeddings.data, -val, val)  # xavier_uniform initialization
+            self.frame_prompt_embeddings = nn.Parameter(scale * torch.zeros(self.layers, self.frame_prompts, width))
+            nn.init.uniform_(self.frame_prompt_embeddings.data, -val, val)  # xavier_uniform initialization
         else:
-            self.prompt_embeddings = None
+            self.frame_prompt_embeddings = None
+
+        if self.video_prompts > 0:
+            self.video_prompt_drop = nn.Dropout()
+            val = math.sqrt(6. / (3 * patch_size**2 + 1) + width)
+            self.video_prompt_embeddings = nn.Parameter(scale * torch.zeros(self.layers, self.video_prompts, width))
+            nn.init.uniform_(self.video_prompt_embeddings.data, -val, val)  # xavier_uniform initialization
+        else:
+            self.video_prompt_embeddings = None
 
     def forward(self, x: torch.Tensor, with_out=False, with_q=False, with_prompt=False):
         x = self.conv1(x)  # shape = [*, width, grid, grid]
@@ -373,7 +385,13 @@ class VisionTransformer(nn.Module):
         x = self.ln_pre(x)
 
         if self.prompts > 0:
-            prompts_embeddings = self.ln_pre(self.prompt_drop(self.prompt_embeddings))
+            _embeddings = []
+            if (self.frame_prompts > 0):
+                _embeddings.append(self.frame_prompt_drop(self.frame_prompt_embeddings))
+            if (self.video_prompts > 0):
+                _embeddings.append(self.video_prompt_drop(self.video_prompt_embeddings))
+
+            prompts_embeddings = self.ln_pre(torch.cat(_embeddings, dim=1))
         else:
             prompts_embeddings = None
 
