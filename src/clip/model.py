@@ -224,7 +224,51 @@ class ResidualAttentionBlock(nn.Module):
         self.attn_mask = self.attn_mask.to(dtype=x.dtype, device=x.device) if self.attn_mask is not None else None
         return self.attn(x, x, x, need_weights=False, attn_mask=self.attn_mask)
 
-    def forward(self, x: torch.Tensor):
+    def forward(
+        self,
+        x: torch.Tensor,
+        prompt_embeddings=None,
+        prompt_mode=None,
+        block_index=None
+    ):
+        if (not type(prompt_embeddings) == type(None)):
+            prompt_num = prompt_embeddings.shape[0]
+
+            if block_index == 0:
+                x = torch.cat(
+                    (
+                        x[:, :1],
+                        prompt_embeddings.unsqueeze(0).expand(x.shape[0], -1, -1),
+                        x[:, 1:]
+                    ),
+                    dim=1
+                )
+            else:
+                if prompt_mode == "deepc":
+                    prompt_memory = (
+                        prompt_embeddings.unsqueeze(0).expand(x.shape[0], -1, -1) +
+                        x[:, 1: 1 + prompt_num]
+                    )
+                elif prompt_mode == "deep":
+                    prompt_memory = (
+                        prompt_embeddings.unsqueeze(0).expand(x.shape[0], -1, -1)
+                    )
+                elif prompt_mode == "shallow":
+                    prompt_memory = (
+                        x[:, 1: 1 + prompt_num]
+                    )
+                else:
+                    raise NotImplementedError()
+
+                x = torch.cat(
+                    (
+                        x[:, :1],
+                        prompt_memory,
+                        x[:,  prompt_num + 1:]
+                    ),
+                    dim=1
+                )
+
         a = self.attention(self.ln_1(x))
         x = x + a['out']
         x = x + self.mlp(self.ln_2(x))
@@ -242,47 +286,25 @@ class Transformer(nn.Module):
             *[ResidualAttentionBlock(width, heads, attn_mask, attn_record=attn_record) for _ in range(layers)]
         )
 
-    def forward(self, x: torch.Tensor, prompt_embeddings: torch.Tensor, prompt_mode: str, with_out=False, with_q=False, with_prompt=False):
+    def forward(
+        self,
+            x: torch.Tensor,
+            prompt_embeddings: torch.Tensor,
+            prompt_mode: str,
+            with_out=False,
+            with_q=False,
+            with_prompt=False
+    ):
         # key and value from each layer
         kvs = []
-        if (type(prompt_embeddings) == type(None)):
-            prompts = -1
-        else:
-            prompts = prompt_embeddings.shape[1]
-
-        assert not with_prompt or (prompts > 0), "cannot acquire features with prompt without prompting"
 
         for i, blk in enumerate(self.resblocks):
-            if prompts > 0:
-                if prompt_mode == "deepc":
-                    prompt_memory = (
-                        prompt_embeddings[i].unsqueeze(0).expand(x.shape[0], -1, -1) +
-                        (0 if i == 0 else x[:, 1: 1 + prompts])
-                    )
-                elif prompt_mode == "deep":
-                    prompt_memory = (
-                        prompt_embeddings[i].unsqueeze(0).expand(x.shape[0], -1, -1)
-                    )
-                elif prompt_mode == "shallow":
-                    prompt_memory = (
-                        (
-                            prompt_embeddings[0].unsqueeze(0).expand(x.shape[0], -1, -1)
-                            if i == 0 else
-                            x[:, 1: 1 + prompts]
-                        )
-                    )
-                else:
-                    raise NotImplementedError()
-
+            if (not type(prompt_embeddings) == type(None)):
                 a = blk(
-                    torch.cat(
-                        [
-                            x[:, :1],
-                            prompt_memory,
-                            x[:, (1 if i == 0 else (prompts + 1)):]
-                        ],
-                        dim=1
-                    )
+                    x,
+                    prompt_embeddings=prompt_embeddings[i],
+                    prompt_mode=prompt_mode,
+                    block_index=i
                 )
             else:
                 a = blk(x)
@@ -295,18 +317,18 @@ class Transformer(nn.Module):
             if (not with_q):
                 a.pop('q')
 
-            if (prompts > 0 and not with_prompt):
+            if (not with_prompt and not type(prompt_embeddings) == type(None)):
+                prompt_num = prompt_embeddings.shape[1]
                 for k in a:
                     a[k] = torch.cat(
                         (
                             a[k][:, :1],
-                            a[k][:, 1 + prompts:]
+                            a[k][:, 1 + prompt_num:]
                         ),
                         dim=1
                     )
 
             kvs.append(a)
-
         return kvs
 
 
@@ -351,10 +373,16 @@ class VisionTransformer(nn.Module):
         self.prompt_mode = prompt_mode
 
         if self.frame_prompts > 0:
-            self.frame_prompt_drop = nn.Dropout()
-            val = math.sqrt(6. / (3 * patch_size**2 + 1) + width)
-            self.frame_prompt_embeddings = nn.Parameter(scale * torch.zeros(self.layers, self.frame_prompts, width))
-            nn.init.uniform_(self.frame_prompt_embeddings.data, -val, val)  # xavier_uniform initialization
+            self.frame_prompt_drop = nn.Dropout(0.2)
+            self.frame_prompt_embeddings = nn.Parameter(
+                torch.cat(
+                    (
+                        scale * torch.randn(1, self.frame_prompts, width),
+                        torch.zeros(self.layers-1, self.frame_prompts, width)
+                    ),
+                    dim=0
+                )
+            )
         else:
             self.frame_prompt_embeddings = None
 
@@ -366,7 +394,7 @@ class VisionTransformer(nn.Module):
         else:
             self.video_prompt_embeddings = None
 
-    def forward(self, x: torch.Tensor, with_out=False, with_q=False, with_prompt=False):
+    def forward(self, x: torch.Tensor, with_out=False, with_q=False, with_prompt=False, train=False):
         x = self.conv1(x)  # shape = [*, width, grid, grid]
         x = x.reshape(x.shape[0], x.shape[1], -1)  # shape = [*, width, grid ** 2]
         x = x.permute(0, 2, 1)  # shape = [*, grid ** 2, width]
@@ -385,17 +413,32 @@ class VisionTransformer(nn.Module):
         x = self.ln_pre(x)
 
         if self.prompts > 0:
+            # concatenate frame and video prompts
             _embeddings = []
             if (self.frame_prompts > 0):
                 _embeddings.append(self.frame_prompt_drop(self.frame_prompt_embeddings))
             if (self.video_prompts > 0):
                 _embeddings.append(self.video_prompt_drop(self.video_prompt_embeddings))
+            _embeddings = torch.cat(_embeddings, dim=1)
 
-            prompts_embeddings = self.ln_pre(torch.cat(_embeddings, dim=1))
+            # only process the first layer prompt
+            prompt_embeddings = torch.cat(
+                (
+                    self.ln_pre(_embeddings[0].unsqueeze(0)),
+                    _embeddings[1:]
+                )
+            )
         else:
-            prompts_embeddings = None
+            prompt_embeddings = None
 
-        return self.transformer(x, prompts_embeddings, self.prompt_mode, with_out, with_q, with_prompt)
+        return self.transformer(
+            x,
+            prompt_embeddings=prompt_embeddings,
+            prompt_mode=self.prompt_mode,
+            with_out=with_out,
+            with_q=with_q,
+            with_prompt=with_prompt
+        )
 
 
 class CLIP(nn.Module):
