@@ -288,18 +288,26 @@ class Transformer(nn.Module):
 
     def forward(
         self,
-            x: torch.Tensor,
-            prompt_embeddings: torch.Tensor,
-            prompt_mode: str,
-            with_out=False,
-            with_q=False,
-            with_prompt=False
+        x: torch.Tensor,
+        prompt_embeddings: torch.Tensor,
+        prompt_mode: str,
+        prompt_layers: int,
+        with_out=False,
+        with_q=False,
+        with_prompt=False
     ):
         # key and value from each layer
         kvs = []
 
+        assert not with_prompt or (prompt_layers == len(self.resblocks))
+
+        if not type(prompt_embeddings) == type(None):
+            prompt_num = prompt_embeddings.shape[1]
+        else:
+            prompt_num = 0
+
         for i, blk in enumerate(self.resblocks):
-            if (not type(prompt_embeddings) == type(None)):
+            if (prompt_num > 0 and i < prompt_layers):
                 a = blk(
                     x,
                     prompt_embeddings=prompt_embeddings[i],
@@ -317,8 +325,7 @@ class Transformer(nn.Module):
             if (not with_q):
                 a.pop('q')
 
-            if (not with_prompt and not type(prompt_embeddings) == type(None)):
-                prompt_num = prompt_embeddings.shape[1]
+            if (not with_prompt and prompt_num > 0 and i < prompt_layers):
                 for k in a:
                     a[k] = torch.cat(
                         (
@@ -327,6 +334,15 @@ class Transformer(nn.Module):
                         ),
                         dim=1
                     )
+
+            if prompt_num > 0 and (i+1) == prompt_layers:
+                x = torch.cat(
+                    (
+                        x[:, :1],
+                        x[:, 1 + prompt_num:]
+                    ),
+                    dim=1
+                )
 
             kvs.append(a)
         return kvs
@@ -344,6 +360,7 @@ class VisionTransformer(nn.Module):
         frame_prompts: int = 0,
         video_prompts: int = 0,
         prompt_mode: str = "deepc",
+        prompt_layers: int = 0,
         attn_record: bool = False
     ):
         super().__init__()
@@ -368,29 +385,23 @@ class VisionTransformer(nn.Module):
 
         self.frame_prompts = frame_prompts
         self.video_prompts = video_prompts
+        self.prompt_layers = prompt_layers if prompt_layers > 0 else layers
         self.prompts = frame_prompts + video_prompts
-
         self.prompt_mode = prompt_mode
 
         if self.frame_prompts > 0:
             self.frame_prompt_drop = nn.Dropout(0.2)
             self.frame_prompt_embeddings = nn.Parameter(
-                torch.cat(
-                    (
-                        scale * torch.randn(1, self.frame_prompts, width),
-                        torch.zeros(self.layers-1, self.frame_prompts, width)
-                    ),
-                    dim=0
-                )
+                scale * torch.randn(self.prompt_layers, self.frame_prompts, width),
             )
         else:
             self.frame_prompt_embeddings = None
 
         if self.video_prompts > 0:
-            self.video_prompt_drop = nn.Dropout()
-            val = math.sqrt(6. / (3 * patch_size**2 + 1) + width)
-            self.video_prompt_embeddings = nn.Parameter(scale * torch.zeros(self.layers, self.video_prompts, width))
-            nn.init.uniform_(self.video_prompt_embeddings.data, -val, val)  # xavier_uniform initialization
+            self.video_prompt_drop = nn.Dropout(0.2)
+            self.video_prompt_embeddings = nn.Parameter(
+                scale * torch.randn(self.prompt_layers, self.frame_prompts, width),
+            )
         else:
             self.video_prompt_embeddings = None
 
@@ -419,15 +430,7 @@ class VisionTransformer(nn.Module):
                 _embeddings.append(self.frame_prompt_drop(self.frame_prompt_embeddings))
             if (self.video_prompts > 0):
                 _embeddings.append(self.video_prompt_drop(self.video_prompt_embeddings))
-            _embeddings = torch.cat(_embeddings, dim=1)
-
-            # only process the first layer prompt
-            prompt_embeddings = torch.cat(
-                (
-                    self.ln_pre(_embeddings[0].unsqueeze(0)),
-                    _embeddings[1:]
-                )
-            )
+            prompt_embeddings = torch.cat(_embeddings, dim=1)
         else:
             prompt_embeddings = None
 
@@ -435,6 +438,7 @@ class VisionTransformer(nn.Module):
             x,
             prompt_embeddings=prompt_embeddings,
             prompt_mode=self.prompt_mode,
+            prompt_layers=self.prompt_layers,
             with_out=with_out,
             with_q=with_q,
             with_prompt=with_prompt

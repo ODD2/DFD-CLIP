@@ -521,7 +521,8 @@ class Detector(nn.Module):
 
         # number of prompts
         C.frame_prompts = 0
-        C.video_prompts = 0
+        C.prompt_mode = ""
+        C.prompt_layers = -1
 
         # number of classes
         C.num_classes = 1
@@ -573,8 +574,6 @@ class Detector(nn.Module):
         C.train_mode.query_guide.key = ""
         C.train_mode.query_guide.parts = []
         C.train_mode.query_guide.num_layers = -1
-        # - temporal prompt
-        C.train_mode.mixing_prompt = False
 
         # operation mode configurations
         C.op_mode = CN()
@@ -612,8 +611,9 @@ class Detector(nn.Module):
 
         assert type(config.frame_prompts) == int
         assert config.frame_prompts >= 0
-        assert type(config.video_prompts) == int
-        assert config.video_prompts >= 0
+        assert type(config.prompt_mode) == str
+        assert type(config.prompt_layers) == int
+        assert not (config.frame_prompts > 0) or config.prompt_layers == -1 or config.prompt_layers > 0
 
         assert type(config.num_classes) == int and config.num_classes > 0
 
@@ -661,9 +661,6 @@ class Detector(nn.Module):
             assert len(config.train_mode.query_guide.parts) > 0
             assert config.train_mode.query_guide.num_layers > 0
 
-        assert type(config.train_mode.mixing_prompt) == bool
-        assert not config.train_mode.mixing_prompt or config.frame_prompts > 0
-
         config.op_mode.attn_mode = [int(AttnMode[opt.upper()]) for opt in config.op_mode.attn_mode.split("+")]
         assert type(config.op_mode.attn_driver) == list
         assert type(config.op_mode.temporal_position) == bool
@@ -695,8 +692,10 @@ class Detector(nn.Module):
             if config.foundation == Foundations.CLIP:
                 self.encoder = clip.load(
                     config.architecture,
+                    prompt_mode=config.prompt_mode,
                     frame_prompts=config.frame_prompts,
-                    video_prompts=config.video_prompts
+                    prompt_layers=config.prompt_layers,
+                    attn_record=config.op_mode.attn_record
                 )[0].visual.float()
             elif config.foundation == Foundations.DINO2:
                 self.encoder = DINOv2()
@@ -708,24 +707,8 @@ class Detector(nn.Module):
                 )
                 self.encoder = _model.visual.float()
 
-        if len(self.config.encoder_weight) > 0:
-            self.encoder.load_state_dict(
-                remap_weight(
-                    {
-                        **{
-                            k[8:]: v for k, v in torch.load(self.config.encoder_weight, map_location="cpu").items() if k[:7] == "encoder"
-                        },
-                        **({k: v for k, v in self.encoder.state_dict().items() if "video_prompt" in k} if self.config.video_prompts > 0 else {})
-                    }
-                )
-            )
-
         self.encoder = disable_gradients(self.encoder)
-
-        if (config.train_mode.mixing_prompt):
-            self.encoder.frame_prompt_embeddings.requires_grad_(True)
-        if (config.video_prompts > 0):
-            self.encoder.video_prompt_embeddings.requires_grad_(True)
+        self.encoder.frame_prompt_embeddings.requires_grad_(True)
 
         self.losses = []
 
@@ -761,6 +744,21 @@ class Detector(nn.Module):
         # transformations
         self.transform = self._transform(self.encoder.input_resolution)
 
+        # image specific modules
+        self.task_projections = []
+        for i, output_dim in enumerate(config.out_dim):
+            _name = f"proj{i}x{output_dim}"
+            setattr(
+                self,
+                _name,
+                nn.Sequential(
+                    LayerNorm(self.encoder.width),
+                    nn.Dropout(config.dropout),
+                    nn.Linear(self.encoder.width, output_dim, bias=False)
+                )
+            )
+            self.task_projections.append(getattr(self, _name))
+
         # trainable parameters
         if (self.config.train_mode.temporal == TemporalMetric.RANK):
             self.ranking_transform_param = nn.Parameter(
@@ -789,12 +787,28 @@ class Detector(nn.Module):
 
     def predict(self, x, m, with_video_features=False, with_adapt_features=False, train=False):
         b, t, c, h, w = x.shape
+
         # get key and value from each CLIP ViT layer
-        kvs = self.encoder(x.flatten(0, 1))
-        # discard original CLS token and restore temporal dimension
+        kvs = self.encoder(x.flatten(0, 1), with_out=True)
+
+        # restore temporal dimension
         for i in range(len(kvs)):
             for k in kvs[i]:
-                kvs[i][k] = kvs[i][k][:, 1:].unflatten(0, (b, t))
+                kvs[i][k] = kvs[i][k].unflatten(0, (b, t))
+
+        # prefetch image task logits & discard the 'out's
+        image_logits = [
+            proj(kvs[-1]["out"][:, 0, 0])
+            for proj in self.task_projections
+        ]
+        for i in range(len(kvs)):
+            kvs[i].pop("out")
+
+        # discard CLS token
+        for i in range(len(kvs)):
+            for k in kvs[i]:
+                kvs[i][k] = kvs[i][k][:, :, 1:]
+
         # discard unwanted layers
         kvs = [kvs[i] for i in self.layer_indices]
 
@@ -839,11 +853,9 @@ class Detector(nn.Module):
             logging.debug("perform feature adapting")
             kvs = self.adapter(kvs)
 
-        task_logits, video_features, layer_results, layer_qs = self.decoder(kvs, m)
+        video_logits, video_features, layer_results, layer_qs = self.decoder(kvs, m)
 
-        for i in range(len(task_logits)):
-            logits_l2_distance = torch.norm(task_logits[i], dim=-1, keepdim=True)
-            task_logits[i] = 5 * task_logits[i] / (logits_l2_distance + 1e-10)
+        task_logits = [(vl+il)/2 for vl, il in zip(video_logits, image_logits)]
 
         features = {}
 
@@ -1089,10 +1101,7 @@ class Detector(nn.Module):
         super().train(mode)
         if (mode):
             self.encoder.eval()
-            if (self.config.train_mode.mixing_prompt):
-                self.encoder.frame_prompt_drop.train()
-            if (self.config.video_prompts > 0):
-                self.encoder.video_prompt_drop.train()
+            self.encoder.frame_prompt_drop.train()
         return self
 
 
@@ -1245,7 +1254,7 @@ class Adaptor(nn.Module):
         b, t, p, h, d = kvs[0]['k'].shape
         # perform compression invariant transformation, per layer per key has it's transform matrix
         for i in range(len(kvs)):
-            for k in kvs[i].keys():
+            for k in self.layer_blocks[i].keys():
                 features = (self.layer_blocks[i][k](kvs[i][k].view((b, t, p, -1)))).view((b, t, p, h, d))
                 if self.residual:
                     kvs[i][k] = kvs[i][k] + features
@@ -1268,7 +1277,8 @@ class VPT(nn.Module):
     """
     @staticmethod
     def get_default_config():
-        C = CN(new_allowed=True)
+        C = CN()
+        C.architecture = "ViT-B/16"
         C.name = "VPT"
         C.out_dim = []
         C.losses = []
@@ -1298,8 +1308,9 @@ class VPT(nn.Module):
         config = config.clone()
         config.defrost()
 
-        assert type(config.frame_prompts) == int
+        assert len(config.architecture) > 0
 
+        assert type(config.frame_prompts) == int
         assert type(config.prompt_mode) == str
 
         assert type(config.out_dim) == list
@@ -1358,9 +1369,10 @@ class VPT(nn.Module):
                 self.losses.append(globals()[loss.name](**(dict(loss.args) if "args" in loss else {})))
 
         # class linear prob
+        scale = self.encoder.width**-0.5
         for i, v in enumerate(self.out_dim):
             name = f"proj{i}_{v}"
-            setattr(self, name, nn.Parameter(torch.randn((self.encoder.width, v))))
+            setattr(self, name, nn.Parameter(scale * torch.randn((self.encoder.width, v))))
             self.task_proj.append(getattr(self, name))
 
         # transformations
@@ -1382,17 +1394,20 @@ class VPT(nn.Module):
                 self.semantic_queries = torch.stack(self.semantic_queries)
                 self.semantic_queries.requires_grad_(False)
 
-    def predict(self, x):
+    def predict(self, x, train=False):
         b, t, c, h, w = x.shape
 
         # get key and value from each CLIP ViT layer
-        kvs = self.encoder(x.flatten(0, 1), with_out=True, with_q=True, with_prompt=True)
+        kvs = self.encoder(x.flatten(0, 1), train=train, with_out=True, with_q=True, with_prompt=True)
 
         task_logits = [
-            self.cls_ln(self.cls_drop(kvs[-1]["out"][:, 0])) @ m
+            self.cls_ln(
+                self.cls_drop(
+                    kvs[-1]["out"][:, 0]
+                )
+            ) @ m
             for m in self.task_proj
         ]
-        # task_logits = [self.cls_ln(kvs[-1]["out"][:, 0]) @ m for m in self.task_proj]
 
         for i in range(len(task_logits)):
             logits_l2_distance = torch.norm(task_logits[i], dim=-1, keepdim=True)
@@ -1404,7 +1419,7 @@ class VPT(nn.Module):
         device = x.device
         b, t, c, h, w = x.shape
 
-        task_logits, features = self.predict(x)
+        task_logits, features = self.predict(x, train=train)
 
         task_losses = [
             loss_fn(logits, labels) if single_task == None or i == single_task else 0
@@ -1421,46 +1436,35 @@ class VPT(nn.Module):
             if self.config.train_mode.query_guide.type == QueryGuideMode.NORMAL:
                 # create stack of features for layer wise prompt tuning parameters.
                 kvs = features["kvs"]
-                layer_prompt_ks = torch.stack(
+                layer_prompt_qs = torch.stack(
                     [kv["q"][:, 1:1+self.encoder.prompts].flatten(-2) for kv in kvs],
                     dim=1
                 )
 
                 cls_part_layer = self.config.train_mode.query_guide.num_layers
-                if (cls_part_layer < self.encoder.layers):
-                    other_losses["cls_div"] = (
-                        torch.sum(
-                            torch.nn.functional.cosine_similarity(
-                                layer_prompt_ks[:, cls_part_layer:].unsqueeze(3),
-                                layer_prompt_ks[:, cls_part_layer:].unsqueeze(2),
-                                dim=-1
-                            ).abs().mean(3),
-                            dim=-1
-                        ) - 1
-                    ).mean(1)
                 if (cls_part_layer > 0):
                     frame_prompts = self.encoder.prompts
                     num_queries = self.semantic_queries.shape[1]
-                    repeat_spread_semantic_queries = torch.cat(
-                        (
-                            self.semantic_queries[:cls_part_layer].repeat((1, frame_prompts//num_queries, 1)),
-                            self.semantic_queries[:cls_part_layer, :(frame_prompts % num_queries)]
-                        ),
-                        dim=1
+                    repeat_spread_semantic_queries = self.semantic_queries[:cls_part_layer].repeat(
+                        (1, frame_prompts // num_queries, 1)
                     )
-                    other_losses["cls_sim"] = (
-                        torch.sum(
+                    if (frame_prompts % num_queries):
+                        repeat_spread_semantic_queries = torch.cat(
                             (
-                                1 - torch.nn.functional.cosine_similarity(
-                                    layer_prompt_ks[:, :cls_part_layer],
-                                    repeat_spread_semantic_queries.to(layer_prompt_ks.device),
-                                    dim=-1
-                                )
-                            ) / 2,
-                            dim=-1
-                        ).mean(1)
+                                repeat_spread_semantic_queries,
+                                self.semantic_queries[:cls_part_layer, :(frame_prompts % num_queries)]
+                            ),
+                            dim=1
+                        )
+                    other_losses["cls_sim"] = (
+                        (
+                            1 - torch.nn.functional.cosine_similarity(
+                                layer_prompt_qs[:, :cls_part_layer],
+                                repeat_spread_semantic_queries.to(layer_prompt_qs.device),
+                                dim=-1
+                            )
+                        ) / 2
                     )
-
         return task_losses, task_logits, other_losses
 
     def _transform(self, n_px):

@@ -392,13 +392,14 @@ class FFPP(Dataset):
                         ),
                         alb.ImageCompression(
                             quality_lower=40, quality_upper=100, p=0.5
-                        )
+                        ),
+                        alb.HorizontalFlip()
                     ]
 
                     if "rrc" in config.augmentation:
                         augmentations += [
                             alb.RandomResizedCrop(
-                                self.n_px, self.n_px, scale=(0.4, 0.9), ratio=(1, 1), p=1.0
+                                self.n_px, self.n_px, scale=(0.7, 0.9), ratio=(1, 1), p=0.3
                             ),
                             alb.Compose(
                                 [
@@ -408,14 +409,12 @@ class FFPP(Dataset):
                                     alb.Resize(
                                         self.n_px, self.n_px, cv2.INTER_CUBIC, always_apply=True
                                     )
-                                ], p=0.5
+                                ], p=0.3
                             ),
+                            alb.MultiplicativeNoise(
+                                p=0.3
+                            )
                         ]
-
-                    augmentations += [
-                        alb.HorizontalFlip()
-                    ]
-
                     self.sequence_augmentation = alb.ReplayCompose(
                         augmentations,
                         p=1.
