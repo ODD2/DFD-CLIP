@@ -207,8 +207,8 @@ class MultiheadAttention(nn.Module):
             self.activations.append(locals()[driver])
 
         self.n_act = len(self.activations)  # softmax and coda
-        self.in_proj = nn.Linear(embed_dim, self.n_act * embed_dim)
-        self.out_proj = nn.Linear(embed_dim, embed_dim)
+        self.in_proj = nn.Linear(embed_dim, self.n_act * embed_dim, bias=False)
+        self.out_proj = nn.Linear(embed_dim, embed_dim, bias=False)
 
         self.embed_dim = embed_dim
         self.n_head = n_head
@@ -255,6 +255,9 @@ class ResidualAttentionBlock(nn.Module):
         self.ln_2 = LayerNorm(d_model)
 
         self._apply_reference(config, block_index, layer_indices, reference_layers)
+        self.ln_1.requires_grad_(False)
+        self.mlp.requires_grad_(False)
+        self.ln_2.requires_grad_(False)
 
     def attention(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, m: torch.Tensor):
         return self.attn(q, k, v, m)
@@ -407,13 +410,15 @@ class Decoder(nn.Module):
                 if not self.config.op_mode.global_prediction and j < len(detector.layer_indices) - 1:
                     continue
                 _name = f"proj{i}x{output_dim}_L{l}"
-                setattr(self, _name,
-                        nn.Sequential(
-                            LayerNorm(width),
-                            nn.Dropout(config.dropout),
-                            nn.Linear(width, output_dim, bias=False)
-                        )
-                        )
+                setattr(
+                    self,
+                    _name,
+                    nn.Sequential(
+                        LayerNorm(width),
+                        nn.Dropout(config.dropout),
+                        nn.Linear(width, output_dim, bias=False)
+                    )
+                )
                 layer_heads.append(getattr(self, _name))
             self.task_projections.append(layer_heads)
 
@@ -787,7 +792,6 @@ class Detector(nn.Module):
 
     def predict(self, x, m, with_video_features=False, with_adapt_features=False, train=False):
         b, t, c, h, w = x.shape
-
         # get key and value from each CLIP ViT layer
         kvs = self.encoder(x.flatten(0, 1), with_out=True)
 

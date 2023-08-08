@@ -410,9 +410,6 @@ class FFPP(Dataset):
                                         self.n_px, self.n_px, cv2.INTER_CUBIC, always_apply=True
                                     )
                                 ], p=0.3
-                            ),
-                            alb.MultiplicativeNoise(
-                                p=0.3
                             )
                         ]
                     self.sequence_augmentation = alb.ReplayCompose(
@@ -421,24 +418,44 @@ class FFPP(Dataset):
                     )
 
                 if "frame" in config.augmentation:
+                    augmentations = [
+                        alb.Resize(
+                            self.n_px, self.n_px, cv2.INTER_CUBIC
+                        ),
+                        alb.RGBShift(
+                            (-5, 5), (-5, 5), (-5, 5), p=0.3
+                        ),
+                        alb.HueSaturationValue(
+                            hue_shift_limit=(-0.05, 0.05), sat_shift_limit=(-0.05, 0.05), val_shift_limit=(-0.05, 0.05), p=0.3
+                        ),
+                        alb.RandomBrightnessContrast(
+                            brightness_limit=(-0.05, 0.05), contrast_limit=(-0.05, 0.05), p=0.3
+                        ),
+                        alb.ImageCompression(
+                            quality_lower=80, quality_upper=100, p=0.5
+                        ),
+                    ]
+                    if "noise" in config.augmentation:
+                        augmentations += [
+                            alb.OneOf(
+                                [
+                                    alb.GaussNoise(
+                                        per_channel=True,
+                                        p=1.0
+                                    ),
+                                    alb.MultiplicativeNoise(
+                                        per_channel=False,
+                                        elementwise=True,
+                                        always_apply=False,
+                                        p=1.0
+                                    ),
+                                ],
+                                p=0.3
+                            )
+                        ]
+
                     self.frame_augmentation = alb.ReplayCompose(
-                        [
-                            alb.Resize(
-                                self.n_px, self.n_px, cv2.INTER_CUBIC
-                            ),
-                            alb.RGBShift(
-                                (-5, 5), (-5, 5), (-5, 5), p=0.3
-                            ),
-                            alb.HueSaturationValue(
-                                hue_shift_limit=(-0.05, 0.05), sat_shift_limit=(-0.05, 0.05), val_shift_limit=(-0.05, 0.05), p=0.3
-                            ),
-                            alb.RandomBrightnessContrast(
-                                brightness_limit=(-0.05, 0.05), contrast_limit=(-0.05, 0.05), p=0.3
-                            ),
-                            alb.ImageCompression(
-                                quality_lower=80, quality_upper=100, p=0.5
-                            ),
-                        ],
+                        augmentations,
                         p=1.0
                     )
 

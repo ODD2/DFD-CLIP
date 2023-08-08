@@ -111,7 +111,7 @@ trainer:
   early_stop: 3
   batch_accum: 3
   batch_size: 5
-  learning_rate: 0.001
+  learning_rate: 0.0008
   max_steps: 4000
   metrics:
   - name: deepfake/ffpp
