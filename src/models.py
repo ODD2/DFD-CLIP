@@ -804,15 +804,17 @@ class Detector(nn.Module):
 
         # the frame modality training
         if self.config.op_mode.frame_task:
-            # prefetch image task logits & discard the 'out's
+            # prefetch image task logits
             image_logits = [
                 proj(kvs[-1]["out"][:, 0, 0])
                 for proj in self.task_projections
             ]
-            for i in range(len(kvs)):
-                kvs[i].pop("out")
         else:
             image_logits = None
+
+        # discard the 'out's
+        for i in range(len(kvs)):
+            kvs[i].pop("out")
 
         # discard CLS token
         for i in range(len(kvs)):
