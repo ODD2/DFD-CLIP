@@ -36,9 +36,18 @@ def get_config(cfg_file, args):
     C.data.num_frames = preset.data.num_frames
     C.data.clip_duration = preset.data.clip_duration
 
+    unique_datasets = {
+        d.name: d
+        for d in (
+            preset.data.eval + (
+                aux.data.eval if args.aux_file else []
+            )
+        )
+    }
+
     C.data.datasets = [
         globals()[d.name].get_default_config().merge_from_other_cfg(d)
-        for d in preset.data.eval + (aux.data.eval if args.aux_file else [])
+        for d in unique_datasets.values()
         if d.category == "Deepfake"
     ]
 
@@ -147,7 +156,7 @@ def main(args):
                 if (args.modality == "clip"):
                     pred_prob = p
                     pred_label = pred_prob.argmax(dim=-1)
-                    label = torch.tensor([label]*pred_prob.shape[0], device="cpu")
+                    label = torch.tensor([label] * pred_prob.shape[0], device="cpu")
                 elif (args.modality == "video"):
                     pred_prob = p.mean(dim=0).unsqueeze(0)
                     pred_label = pred_prob.argmax(dim=-1).unsqueeze(0)

@@ -596,6 +596,8 @@ class Detector(nn.Module):
         C.op_mode.aug_query = False
         # > exponent moving average frames
         C.op_mode.ema_frame = -1.0
+        # > operate with frame modality
+        C.op_mode.frame_task = True
 
         # regularization
         C.dropout = 0.0
@@ -677,6 +679,9 @@ class Detector(nn.Module):
         if config.op_mode.ema_frame > 0:
             assert 0 <= config.op_mode.ema_frame <= 1
 
+        assert type(config.op_mode.frame_task) == bool
+        assert not config.op_mode.frame_task or config.frame_prompts > 0
+
         assert type(config.dropout) == float
         assert 0 <= config.dropout <= 1
 
@@ -750,19 +755,20 @@ class Detector(nn.Module):
         self.transform = self._transform(self.encoder.input_resolution)
 
         # image specific modules
-        self.task_projections = []
-        for i, output_dim in enumerate(config.out_dim):
-            _name = f"proj{i}x{output_dim}"
-            setattr(
-                self,
-                _name,
-                nn.Sequential(
-                    LayerNorm(self.encoder.width),
-                    nn.Dropout(config.dropout),
-                    nn.Linear(self.encoder.width, output_dim, bias=False)
+        if self.config.op_mode.frame_task:
+            self.task_projections = []
+            for i, output_dim in enumerate(config.out_dim):
+                _name = f"proj{i}x{output_dim}"
+                setattr(
+                    self,
+                    _name,
+                    nn.Sequential(
+                        LayerNorm(self.encoder.width),
+                        nn.Dropout(config.dropout),
+                        nn.Linear(self.encoder.width, output_dim, bias=False)
+                    )
                 )
-            )
-            self.task_projections.append(getattr(self, _name))
+                self.task_projections.append(getattr(self, _name))
 
         # trainable parameters
         if (self.config.train_mode.temporal == TemporalMetric.RANK):
@@ -800,13 +806,17 @@ class Detector(nn.Module):
             for k in kvs[i]:
                 kvs[i][k] = kvs[i][k].unflatten(0, (b, t))
 
-        # prefetch image task logits & discard the 'out's
-        image_logits = [
-            proj(kvs[-1]["out"][:, 0, 0])
-            for proj in self.task_projections
-        ]
-        for i in range(len(kvs)):
-            kvs[i].pop("out")
+        # the frame modality training
+        if self.config.op_mode.frame_task:
+            # prefetch image task logits & discard the 'out's
+            image_logits = [
+                proj(kvs[-1]["out"][:, 0, 0])
+                for proj in self.task_projections
+            ]
+            for i in range(len(kvs)):
+                kvs[i].pop("out")
+        else:
+            image_logits = None
 
         # discard CLS token
         for i in range(len(kvs)):
@@ -859,7 +869,10 @@ class Detector(nn.Module):
 
         video_logits, video_features, layer_results, layer_qs = self.decoder(kvs, m)
 
-        task_logits = [(vl+il)/2 for vl, il in zip(video_logits, image_logits)]
+        if image_logits == None:
+            task_logits = video_logits
+        else:
+            task_logits = [(vl + il) / 2 for vl, il in zip(video_logits, image_logits)]
 
         features = {}
 
@@ -1441,7 +1454,7 @@ class VPT(nn.Module):
                 # create stack of features for layer wise prompt tuning parameters.
                 kvs = features["kvs"]
                 layer_prompt_qs = torch.stack(
-                    [kv["q"][:, 1:1+self.encoder.prompts].flatten(-2) for kv in kvs],
+                    [kv["q"][:, 1:1 + self.encoder.prompts].flatten(-2) for kv in kvs],
                     dim=1
                 )
 
