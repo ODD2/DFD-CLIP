@@ -521,8 +521,6 @@ class Detector(nn.Module):
         C.name = "Detector"
         C.foundation = Foundations.CLIP.name.lower()
         C.architecture = 'ViT-B/16'
-        # the pretrained weight for encoder
-        C.encoder_weight = ""
 
         # number of prompts
         C.frame_prompts = 0
@@ -597,7 +595,7 @@ class Detector(nn.Module):
         # > exponent moving average frames
         C.op_mode.ema_frame = -1.0
         # > operate with frame modality
-        C.op_mode.frame_task = True
+        C.op_mode.frame_task = False
 
         # regularization
         C.dropout = 0.0
@@ -631,8 +629,6 @@ class Detector(nn.Module):
         elif config.decode_mode.type == DecodeMode.INDEX:
             assert type(config.decode_mode.indices) == list
             assert len(config.decode_mode.indices) > 0, "indices unspecified for decoding."
-
-        assert type(config.encoder_weight) == str
 
         assert type(config.out_dim) == list
 
