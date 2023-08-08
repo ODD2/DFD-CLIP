@@ -40,6 +40,7 @@ def get_config(params):
     C.system.deterministic_training = False
     C.system.training_eval_interval = 10
     C.system.evaluation_interval = 10
+    C.system.evaluation_aggregate = 1
 
     # tracking
     C.tracking = CN()
@@ -120,12 +121,16 @@ def get_config(params):
 
 def register_trainer_callbacks(config, trainer, evaluator):
     def evaluation_proxy(trainer):
-        if trainer.steps % trainer.evaluation_interval:
+        if trainer.steps % config.system.evaluation_interval:
             return
         # best main metric is none before the first evaluation
         prev_metric = getattr(evaluator, 'best_main_metric', None)
         evaluator.run(trainer)
-        next_metric = evaluator.best_main_metric
+        next_metric = getattr(evaluator, 'best_main_metric', None)
+
+        if trainer.steps % (config.system.evaluation_interval * config.system.evaluation_aggregate):
+            return
+
         # record
         if (prev_metric == next_metric):
             trainer.early_stop_counter += 1
@@ -178,12 +183,11 @@ def register_trainer_callbacks(config, trainer, evaluator):
     # evaluator
     trainer.add_callback(
         'on_batch_end',
-        evaluation_proxy,
-        evaluation_interval=config.system.evaluation_interval
+        evaluation_proxy
     )
 
 
-def register_evaluator_callbacks(config, evaluator):
+def register_evaluator_callbacks(config, evaluator, trainer):
     def save_model(evaluator):
         if evaluator.best_model_state:
             evaluator.accelerator.save(
@@ -196,6 +200,33 @@ def register_evaluator_callbacks(config, evaluator):
                 os.path.join(PROJECT_DIR, 'last_weights.pt')
             )
 
+    def evaluation_aggregator(fn, end=False):
+        # mode:
+        #   True - executes only first step
+        #   False - executes only the last step.
+        eval_interval = config.system.evaluation_interval
+        eval_aggregate = config.system.evaluation_aggregate
+
+        # just execute each step
+        if eval_aggregate == 1:
+            return fn
+
+        # execute in two conditions
+        if not end:
+            def driver(evaluator):
+                assert trainer.steps % eval_interval == 0
+                eval_count = trainer.steps // eval_interval
+                if (eval_count % eval_aggregate == 1):
+                    fn(evaluator)
+        else:
+            def driver(evaluator):
+                assert trainer.steps % eval_interval == 0
+                eval_count = trainer.steps // eval_interval
+                if (eval_count % eval_aggregate == 0):
+                    fn(evaluator)
+
+        return driver
+
     # timer
     timer_events = ['evaluation', 'dataloader']
     evaluator.add_callback('on_evaluation_start', lambda _: None, timer={evt: 0 for evt in timer_events})
@@ -204,24 +235,31 @@ def register_evaluator_callbacks(config, evaluator):
         evaluator.add_callback(f'on_{event}_start', start_timer)
         evaluator.add_callback(f'on_{event}_end', end_timer)
 
-    # metrics
+    # metrics & tracker
     evaluator.add_callback('on_batch_end', update_metrics)
     if evaluator.accelerator.is_local_main_process:
-        evaluator.add_callback('on_evaluation_start', init_metrics)
-        evaluator.add_callback('on_evaluation_end', compute_metrics, training_eval_interval=1)
+        def evalution_end_procedures(evaluator):
+            # metric computation
+            compute_metrics(evaluator)
+            # model saver
+            cache_best_model(evaluator)
+            save_model(evaluator)
 
-    # tracker
-    if evaluator.accelerator.is_local_main_process:
-        # model saver
+        # metric initialization
+        evaluator.add_callback(
+            'on_evaluation_start',
+            evaluation_aggregator(init_metrics, end=False),
+        )
+
         evaluator.add_callback(
             'on_evaluation_end',
-            cache_best_model,
+            evaluation_aggregator(evalution_end_procedures, end=True),
+            training_eval_interval=1,
             main_metric=config.tracking.main_metric,
             compare_fn=config.tracking.compare_fn,
             best_model_state=None,
             last_model_state=None
         )
-        evaluator.add_callback('on_evaluation_end', save_model)
 
     # stdout logger
     evaluator.add_callback(
@@ -307,7 +345,7 @@ def main(params):
 
     # register callbacks
     register_trainer_callbacks(config, trainer, evaluator)
-    register_evaluator_callbacks(config, evaluator)
+    register_evaluator_callbacks(config, evaluator, trainer)
 
     # start training
     trainer.run()
