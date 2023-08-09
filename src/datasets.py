@@ -848,7 +848,8 @@ class FSh(FFPP):
     @staticmethod
     def get_default_config():
         C = FFPP.get_default_config()
-        C.types = ["FSh"]
+        C.name = "FSh"
+        C.types = ["FSh", "REAL"]
         return C
 
     @staticmethod
@@ -858,8 +859,8 @@ class FSh(FFPP):
         config.defrost()
 
         assert type(config.types) == list
-        assert len(config.types) > 1
-        assert config.types[0] == "FSh"
+        assert len(config.types) == 2
+        assert "FSh" in config.types and "REAL" in config.types
 
         config.freeze()
         return config
