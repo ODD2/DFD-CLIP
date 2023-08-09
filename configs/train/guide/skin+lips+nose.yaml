@@ -69,7 +69,7 @@ model:
   frame_prompts: 10
   prompt_mode: deepc
   prompt_layers: 6
-  num_classes: 4
+  num_classes: 3
   architecture: ViT-B/16
   decode_mode: 
     type: index
@@ -82,7 +82,7 @@ model:
     query_guide:
       type: normal
       key: k
-      parts: ["lips", "skin","nose","eyes"]
+      parts: ["skin", "lips", "nose"]
       num_layers: 6
       path: "./misc/real_semantic_patches_v3_1000.pickle"
   dropout: 0.5
