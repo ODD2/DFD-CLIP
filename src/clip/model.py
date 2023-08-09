@@ -299,8 +299,6 @@ class Transformer(nn.Module):
         # key and value from each layer
         kvs = []
 
-        assert not with_prompt or (prompt_layers == len(self.resblocks))
-
         if not type(prompt_embeddings) == type(None):
             prompt_num = prompt_embeddings.shape[1]
         else:
@@ -325,7 +323,25 @@ class Transformer(nn.Module):
             if (not with_q):
                 a.pop('q')
 
-            if (not with_prompt and prompt_num > 0 and i < prompt_layers):
+            if with_prompt:
+                for k in a:
+                    _data = {}
+                    # split the prompt and original tokens
+                    if i < prompt_layers and prompt_num > 0:
+                        _data["prompt"] = a[k][:, 1: 1 + prompt_num]
+                        _data["origin"] = torch.cat(
+                            (
+                                a[k][:, :1],
+                                a[k][:, 1 + prompt_num:]
+                            ),
+                            dim=1
+                        )
+                    else:
+                        _data["prompt"] = None
+                        _data["origin"] = a[k]
+                    a[k] = _data
+
+            elif (not with_prompt and prompt_num > 0 and i < prompt_layers):
                 for k in a:
                     a[k] = torch.cat(
                         (

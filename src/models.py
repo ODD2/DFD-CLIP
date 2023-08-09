@@ -577,6 +577,13 @@ class Detector(nn.Module):
         C.train_mode.query_guide.key = ""
         C.train_mode.query_guide.parts = []
         C.train_mode.query_guide.num_layers = -1
+        # > prompt guide
+        C.train_mode.prompt_guide = CN()
+        C.train_mode.prompt_guide.type = QueryGuideMode.NONE.name.lower()
+        # - for normal mode
+        C.train_mode.prompt_guide.path = ""
+        C.train_mode.prompt_guide.key = ""
+        C.train_mode.prompt_guide.parts = []
 
         # operation mode configurations
         C.op_mode = CN()
@@ -657,12 +664,23 @@ class Detector(nn.Module):
         if config.train_mode.nerf_raw > 0:
             assert 0 <= config.train_mode.nerf_raw <= 1.0
 
-        config.train_mode.query_guide.type = int(QueryGuideMode[config.train_mode.query_guide.type.upper()])
+        config.train_mode.query_guide.type = int(
+            QueryGuideMode[config.train_mode.query_guide.type.upper()]
+        )
         if config.train_mode.query_guide.type == QueryGuideMode.NORMAL:
             assert len(config.train_mode.query_guide.path) > 0
             assert len(config.train_mode.query_guide.key) > 0
             assert len(config.train_mode.query_guide.parts) > 0
             assert config.train_mode.query_guide.num_layers > 0
+
+        config.train_mode.prompt_guide.type = int(
+            QueryGuideMode[config.train_mode.prompt_guide.type.upper()]
+        )
+        if config.train_mode.prompt_guide.type == QueryGuideMode.NORMAL:
+            assert len(config.train_mode.prompt_guide.path) > 0
+            assert len(config.train_mode.prompt_guide.key) > 0
+            assert len(config.train_mode.prompt_guide.parts) > 0
+            assert config.frame_prompts > 0
 
         config.op_mode.attn_mode = [int(AttnMode[opt.upper()]) for opt in config.op_mode.attn_mode.split("+")]
         assert type(config.op_mode.attn_driver) == list
@@ -783,24 +801,51 @@ class Detector(nn.Module):
             key = self.config.train_mode.query_guide.key
             with open(file_path, "rb") as f:
                 prefetch_queries = pickle.load(f)
-                self.semantic_queries = []
+                self.video_semantic_queries = []
                 for i in self.layer_indices:
                     layer_results = []
                     for part in parts:
                         layer_results.append(prefetch_queries[key][part][i])
-                    self.semantic_queries.append(torch.stack(layer_results))
-                self.semantic_queries = torch.stack(self.semantic_queries)
-                self.semantic_queries.requires_grad_(False)
+                    self.video_semantic_queries.append(torch.stack(layer_results))
+                self.video_semantic_queries = torch.stack(self.video_semantic_queries)
+                self.video_semantic_queries.requires_grad_(False)
+
+        if (self.config.train_mode.prompt_guide.type == QueryGuideMode.NORMAL):
+            file_path = self.config.train_mode.prompt_guide.path
+            parts = self.config.train_mode.prompt_guide.parts
+            key = self.config.train_mode.prompt_guide.key
+            with open(file_path, "rb") as f:
+                prefetch_queries = pickle.load(f)
+                self.frame_semantic_queries = []
+                for i in range(self.config.prompt_layers):
+                    layer_results = []
+                    for part in parts:
+                        layer_results.append(prefetch_queries[key][part][i])
+                    self.frame_semantic_queries.append(torch.stack(layer_results))
+                self.frame_semantic_queries = torch.stack(self.frame_semantic_queries)
+                self.frame_semantic_queries.requires_grad_(False)
 
     def predict(self, x, m, with_video_features=False, with_adapt_features=False, train=False):
         b, t, c, h, w = x.shape
+        features = {}
+
         # get key and value from each CLIP ViT layer
-        kvs = self.encoder(x.flatten(0, 1), with_out=True)
+        kvs = self.encoder(x.flatten(0, 1), with_q=True, with_out=True, with_prompt=True)
 
         # restore temporal dimension
         for i in range(len(kvs)):
             for k in kvs[i]:
-                kvs[i][k] = kvs[i][k].unflatten(0, (b, t))
+                for spec in kvs[i][k]:
+                    if not type(kvs[i][k][spec]) == type(None):
+                        kvs[i][k][spec] = kvs[i][k][spec].unflatten(0, (b, t))
+
+        # save raw kvs video features for further usage
+        features["kvs"] = [{k1: {k2: kv[k1][k2] for k2 in kv[k1].keys()} for k1 in kv.keys()} for kv in kvs]
+
+        # discard prompt features and reserve only the origin.
+        for i in range(len(kvs)):
+            for k in kvs[i]:
+                kvs[i][k] = kvs[i][k]["origin"]
 
         # the frame modality training
         if self.config.op_mode.frame_task:
@@ -814,9 +859,11 @@ class Detector(nn.Module):
 
         # discard the 'out's
         for i in range(len(kvs)):
-            kvs[i].pop("out")
+            for k in list(kvs[i].keys()):
+                if not k in ["k", "v"]:
+                    kvs[i].pop(k)
 
-        # discard CLS token
+        # discard CLS token & prompts
         for i in range(len(kvs)):
             for k in kvs[i]:
                 kvs[i][k] = kvs[i][k][:, :, 1:]
@@ -872,8 +919,6 @@ class Detector(nn.Module):
         else:
             task_logits = [(vl + il) / 2 for vl, il in zip(video_logits, image_logits)]
 
-        features = {}
-
         if with_video_features:
             features["video"] = video_features
 
@@ -926,8 +971,10 @@ class Detector(nn.Module):
         other_losses = {}
 
         layer_qs = features["layer_qs"]
+        kvs = features["kvs"]
 
         if not self.config.train_mode.query_guide.type == QueryGuideMode.NONE:
+            # guide video learner class token
             if self.config.train_mode.query_guide.type == QueryGuideMode.NORMAL:
                 cls_part_layer = self.config.train_mode.query_guide.num_layers
                 if (cls_part_layer < len(self.layer_indices)):
@@ -947,7 +994,7 @@ class Detector(nn.Module):
                             (
                                 1 - torch.nn.functional.cosine_similarity(
                                     layer_qs[:, :cls_part_layer].flatten(2, 3),
-                                    self.semantic_queries[:cls_part_layer].to(layer_qs.device),
+                                    self.video_semantic_queries[:cls_part_layer].to(layer_qs.device),
                                     dim=-1
                                 )
                             ) / 2,
@@ -955,118 +1002,41 @@ class Detector(nn.Module):
                         )
                     ).mean(1)
 
-        # compression related losses
-        if not self.config.train_mode.compression == CompMetric.NONE:
-            logging.debug("enter compression block.")
+        if not self.config.train_mode.prompt_guide.type == QueryGuideMode.NONE:
+            # guide image extractor spatiotemporal prompt
+            if self.config.train_mode.prompt_guide.type == QueryGuideMode.NORMAL:
+                # create stack of features for layer wise prompt tuning parameters.
+                prompt_layers = self.config.prompt_layers
+                layer_prompt_qs = torch.stack(
+                    [
+                        kv["q"]["prompt"].flatten(-2)
+                        for kv in kvs[:prompt_layers]
+                    ],
+                    dim=2
+                )
 
-            kvs = features["adapt"]
-            _l = len(self.layer_indices)
-            _b, _t, _p, _h, _d = kvs[0]['k'].shape
-            _w = _b // 2
-
-            recon_loss = torch.tensor(0.0, device=device)
-            match_loss = torch.tensor(0.0, device=device)
-
-            for i in range(_w):
-                if (comp[i * 2] == "raw"):
-                    raw_i = i * 2
-                    c23_i = i * 2 + 1
-                else:
-                    raw_i = i * 2 + 1
-                    c23_i = i * 2
-
-                if self.config.train_mode.compression == CompMetric.FEATURE:
-                    logging.debug("compute compression metric in feature mode.")
-                    match_loss += torch.nn.functional.kl_div(
-                        torch.log_softmax(video_features[c23_i], dim=-1),
-                        torch.log_softmax(video_features[raw_i], dim=-1),
-                        log_target=True
-                    ) / (_w)
-                elif self.config.train_mode.compression == CompMetric.SYNC:
-                    logging.debug("compute compression metric in sync mode.")
-                    for layer in range(_l):
-                        for subject in ["k", "v"]:
-                            match_loss += torch.nn.functional.kl_div(
-                                torch.log_softmax(kvs[layer][subject][c23_i], dim=-1),
-                                torch.log_softmax(kvs[layer][subject][raw_i], dim=-1),
-                                log_target=True
-                            ) / (_w * _l * 2)
-
-            other_losses["recon"] = recon_loss
-            other_losses["match"] = 100 * match_loss
-
-        # nerf the strength of raw samples
-        if self.config.train_mode.nerf_raw > 0:
-            logging.debug("perform raw sample label nerfing.")
-            nerf_power = min(self.config.train_mode.nerf_raw, 0)
-            for i in range(len(task_losses)):
-                for j in range(_b):
-                    if comp[j] == "raw":
-                        task_losses[i][j] *= nerf_power
-                    else:
-                        task_losses[i][j] *= (2 - nerf_power)
-
-        # temporal related losses
-        if not self.config.train_mode.temporal == TemporalMetric.NONE:
-            logging.debug("enter temporal metric block.")
-            speed_rank_index = torch.argsort(speed, descending=True).tolist()
-            speed_loss = torch.tensor(0.0, device=x.device)
-
-            if self.config.train_mode.temporal == TemporalMetric.RANK:
-                logging.debug("perform temporal metric ranking.")
-                rank_logits = (video_features @ self.ranking_transform_param).squeeze()
-                rank_losses = []
-
-                for rank in range(0, b - 1):
-                    input1 = rank_logits[speed_rank_index[rank]].repeat(b - 1 - rank)
-                    input2 = rank_logits[speed_rank_index[rank + 1:], ...]
-                    target = torch.ones(b - 1 - rank, device=x.device)
-                    rank_losses.append(
-                        torch.nn.functional.margin_ranking_loss(
-                            input1,
-                            input2,
-                            target,
-                            reduction="none"
+                num_prompts = self.encoder.prompts
+                num_queries = self.frame_semantic_queries.shape[1]
+                repeat_spread_semantic_queries = self.frame_semantic_queries.repeat(
+                    (1, num_prompts // num_queries, 1)
+                )
+                if (num_prompts % num_queries):
+                    repeat_spread_semantic_queries = torch.cat(
+                        (
+                            repeat_spread_semantic_queries,
+                            self.frame_semantic_queries[:, :(num_prompts % num_queries)]
+                        ),
+                        dim=1
+                    )
+                other_losses["prompt_sim"] = (
+                    (
+                        1 - torch.nn.functional.cosine_similarity(
+                            layer_prompt_qs,
+                            repeat_spread_semantic_queries.to(layer_prompt_qs.device),
+                            dim=-1
                         )
-                    )
-
-                speed_loss = torch.cat(rank_losses).mean()
-                speed_loss = 0.05 * speed_loss
-
-                other_losses["speed/rank"] = speed_loss
-
-            elif self.config.train_mode.temporal == TemporalMetric.TRIPLET:
-                logging.debug("perform temporal triplet metric learning.")
-                margin_rounds = min(comb(b, 3), 10)
-
-                indices = list(range(b))
-                random.shuffle(indices)
-
-                _combinations = iter(combinations(indices, 3))
-
-                for _ in range(margin_rounds):
-                    b_index = next(_combinations)
-                    b_index = sorted(b_index, key=lambda _i: speed_rank_index.index(_i))
-
-                    speed_loss += torch.nn.functional.triplet_margin_loss(
-                        anchor=video_features[b_index[0]],
-                        positive=video_features[b_index[1]],
-                        negative=video_features[b_index[2]],
-                        margin=torch.abs(speed[b_index[2]] - speed[b_index[1]])
-                    )
-                    speed_loss += torch.nn.functional.triplet_margin_loss(
-                        anchor=video_features[b_index[2]],
-                        positive=video_features[b_index[1]],
-                        negative=video_features[b_index[0]],
-                        margin=torch.abs(speed[b_index[1]] - speed[b_index[0]])
-                    )
-
-                speed_loss = 0.01 * speed_loss / (margin_rounds * 2)
-
-                other_losses["speed/triplet"] = speed_loss
-
-            else:
-                raise NotImplementedError()
+                    ) / 2
+                ).flatten(1).mean(1)
 
         return task_losses, task_logits, other_losses
 
