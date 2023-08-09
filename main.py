@@ -281,8 +281,8 @@ def main(params):
 
     config = get_config(params)
 
-    # initialize accelerator and trackers (if enabled)
-    accelerator = init_accelerator(config)
+    # initialize accelerator and trackers
+    accelerator = init_accelerator(config, params)
     logging.info(config.dump())
 
     # set random seed for deterministic training
@@ -356,7 +356,7 @@ def main(params):
     send_to_telegram(f"Training Completed, Result Location: {PROJECT_DIR}")
 
 
-def init_accelerator(config):
+def init_accelerator(config, params):
     global PROJECT_DIR
 
     accelerate_kwargs_handlers = [DistributedDataParallelKwargs(find_unused_parameters=True)]
@@ -393,7 +393,7 @@ def init_accelerator(config):
     wandb.save(glob_str=os.path.join(PROJECT_DIR, 'setting.yaml'), policy="now")
 
     # save run name in description.
-    wandb.run.notes = wandb.run.name
+    wandb.run.notes = f"{wandb.run.name}:{params.notes}"
 
     return accelerator
 
@@ -416,6 +416,13 @@ if __name__ == "__main__":
         default=None,
         help="Optional YAML configuration file"
     )
+    parser.add_argument(
+        "--notes",
+        type=str,
+        default="no description",
+        help="Optional message to update the notes in wandb."
+    )
+
     parser.add_argument(
         "--debug",
         action="store_true",

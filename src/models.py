@@ -307,22 +307,11 @@ class ResidualAttentionBlock(nn.Module):
         else:
             raise NotImplementedError()
 
-        if (config.concat_ref):
-            logging.debug("perform concatenation reference initialization.")
-            current_layer = layer_indices[block_index]
-            self.ln_1.load_state_dict(fetch_ln1_params(current_layer))
-            self.ln_2.load_state_dict(fetch_ln2_params(current_layer))
-            if (block_index < (len(layer_indices) - 1)):
-                concat_layer = layer_indices[block_index + 1] - 1
-                self.mlp.load_state_dict(fetch_mlp_params(concat_layer))
-            else:
-                self.mlp.load_state_dict(fetch_mlp_params(current_layer))
-        else:
-            logging.debug("perform normal reference initialization.")
-            current_layer = layer_indices[block_index]
-            self.ln_1.load_state_dict(fetch_ln1_params(current_layer))
-            self.mlp.load_state_dict(fetch_mlp_params(current_layer))
-            self.ln_2.load_state_dict(fetch_ln2_params(current_layer))
+        logging.debug("perform normal reference initialization.")
+        current_layer = layer_indices[block_index]
+        self.ln_1.load_state_dict(fetch_ln1_params(current_layer))
+        self.mlp.load_state_dict(fetch_mlp_params(current_layer))
+        self.ln_2.load_state_dict(fetch_ln2_params(current_layer))
 
 
 class Transformer(nn.Module):
@@ -344,15 +333,6 @@ class Transformer(nn.Module):
                 )
             )
 
-        # augmentive query
-
-        if config.op_mode.aug_query:
-            self.augment_queries = []
-            for i in range(len(layer_indices) - 1):
-                name = f"augment_query_{i}"
-                setattr(self, name, nn.Parameter(torch.zeros(width)))
-                self.augment_queries.append(getattr(self, name))
-
         self.resblocks = nn.Sequential(*self.resblocks)
 
     def forward(self, x: torch.Tensor, kvs, m):
@@ -362,11 +342,6 @@ class Transformer(nn.Module):
             x, qs = blk(x, kv['k'], kv['v'], m)
             layer_results.append(x.unsqueeze(1))
             layer_qs.append(qs.unsqueeze(1))
-
-            if self.config.op_mode.aug_query:
-                logging.debug("perform augmentation query embedding.")
-                if not (i == len(self.resblocks) - 1):
-                    x = x + self.augment_queries[i]
 
         return torch.cat(layer_results, dim=1), torch.cat(layer_qs, dim=1)
 
@@ -389,8 +364,7 @@ class Decoder(nn.Module):
         self.num_classes = config.num_classes
         self.class_embedding = nn.Parameter(scale * torch.randn(self.num_classes, width))
 
-        if self.config.op_mode.temporal_position:
-            self.positional_embedding = nn.Parameter(scale * torch.randn(num_frames, 1, heads, width // heads))
+        self.positional_embedding = nn.Parameter(scale * torch.randn(num_frames, 1, heads, width // heads))
 
         self.ln_pre = LayerNorm(width)
         self.drop_pre = torch.nn.Dropout(config.dropout)
@@ -405,31 +379,25 @@ class Decoder(nn.Module):
 
         self.task_projections = []
         for i, output_dim in enumerate(output_dims):
-            layer_heads = []
-            for j, l in enumerate(detector.layer_indices):
-                if not self.config.op_mode.global_prediction and j < len(detector.layer_indices) - 1:
-                    continue
-                _name = f"proj{i}x{output_dim}_L{l}"
-                setattr(
-                    self,
-                    _name,
-                    nn.Sequential(
-                        LayerNorm(width),
-                        nn.Dropout(config.dropout),
-                        nn.Linear(width, output_dim, bias=False)
-                    )
+            _name = f"proj{i}x{output_dim}_L{detector.layer_indices[-1]}"
+            setattr(
+                self,
+                _name,
+                nn.Sequential(
+                    LayerNorm(width),
+                    nn.Dropout(config.dropout),
+                    nn.Linear(width, output_dim, bias=False)
                 )
-                layer_heads.append(getattr(self, _name))
-            self.task_projections.append(layer_heads)
+            )
+            self.task_projections.append(getattr(self, _name))
 
     def forward(self, kvs, m):
         m = m.repeat_interleave(kvs[0]['k'].size(2), dim=-1)
         # add temporasitional embedding
-        if self.config.op_mode.temporal_position:
-            logging.debug("perform temporal position embedding.")
-            for i in range(len(kvs)):
-                for k in kvs[i].keys():
-                    kvs[i][k] = kvs[i][k] + self.positional_embedding
+        logging.debug("perform temporal position embedding.")
+        for i in range(len(kvs)):
+            for k in kvs[i].keys():
+                kvs[i][k] = kvs[i][k] + self.positional_embedding
 
         # flatten
         for i in range(len(kvs)):
@@ -447,28 +415,13 @@ class Decoder(nn.Module):
 
         x = layer_results.mean(dim=2)
 
-        if self.config.op_mode.global_prediction:
-            logging.debug("perform weighted global prediction.")
+        # drop the layer features if not required
+        video_feature = x[:, -1].squeeze(1)
 
-            video_feature = x
-
-            task_logits = [
-                sum([
-                    layer_heads[i](video_feature[:, i])
-                    for i in range(len(layer_heads))
-                ])
-                for layer_heads in self.task_projections
-            ]
-        else:
-            logging.debug("perform last logit prediction.")
-
-            # drop the layer features if not required
-            video_feature = x[:, -1].squeeze(1)
-
-            task_logits = [
-                layer_heads[-1](video_feature)
-                for layer_heads in self.task_projections
-            ]
+        task_logits = [
+            task_heads(video_feature)
+            for task_heads in self.task_projections
+        ]
 
         return task_logits, video_feature, layer_results, layer_qs
 
@@ -544,22 +497,8 @@ class Detector(nn.Module):
         # output losses
         C.losses = []
 
-        # concatenation to reference layers
-        C.concat_ref = False
-
-        # adapter configurations
-        C.adapter = CN()
-        C.adapter.type = AdaptorMode.NONE.name.lower()
-        C.adapter.struct = CN(new_allowed=True)
-        C.adapter.frozen = False
-        C.adapter.path = ""
-
         # training mode configurations
         C.train_mode = CN()
-        # > temporal learning
-        C.train_mode.temporal = TemporalMetric.NONE.name.lower()
-        # > compression learning
-        C.train_mode.compression = CompMetric.NONE.name.lower()
         # > patch mask
         C.train_mode.patch_mask = CN()
         C.train_mode.patch_mask.type = PatchMaskMode.NONE.name.lower()
@@ -567,8 +506,6 @@ class Detector(nn.Module):
         C.train_mode.patch_mask.path = ""
         # - unmask patch ratio
         C.train_mode.patch_mask.ratio = 1.0
-        # > nerf losses from raw label samples
-        C.train_mode.nerf_raw = -1.0
         # > query guide
         C.train_mode.query_guide = CN()
         C.train_mode.query_guide.type = QueryGuideMode.NONE.name.lower()
@@ -577,30 +514,15 @@ class Detector(nn.Module):
         C.train_mode.query_guide.key = ""
         C.train_mode.query_guide.parts = []
         C.train_mode.query_guide.num_layers = -1
-        # > prompt guide
-        C.train_mode.prompt_guide = CN()
-        C.train_mode.prompt_guide.type = QueryGuideMode.NONE.name.lower()
-        # - for normal mode
-        C.train_mode.prompt_guide.path = ""
-        C.train_mode.prompt_guide.key = ""
-        C.train_mode.prompt_guide.parts = []
 
         # operation mode configurations
         C.op_mode = CN()
-        # > temporal positional embedding
-        C.op_mode.temporal_position = True
         # > smax attention mode
         C.op_mode.attn_mode = AttnMode.PATCH.name.lower()
         # > attention activations
         C.op_mode.attn_driver = ["smax", "coda"]
         # > record attention scores
         C.op_mode.attn_record = False
-        # > weighted global prediction
-        C.op_mode.global_prediction = False
-        # > augmentation queries
-        C.op_mode.aug_query = False
-        # > exponent moving average frames
-        C.op_mode.ema_frame = -1.0
         # > operate with frame modality
         C.op_mode.frame_task = False
 
@@ -641,28 +563,12 @@ class Detector(nn.Module):
 
         assert type(config.losses) == list
 
-        assert type(config.concat_ref) == bool
-
-        config.adapter.type = int(AdaptorMode[config.adapter.type.upper()])
-        if (config.adapter.type == AdaptorMode.PRETRAIN):
-            assert type(config.adapter.path) == str
-            assert len(config.adapter.path) > 0
-            assert type(config.adapter.frozen) == bool
-
-        config.train_mode.temporal = int(TemporalMetric[config.train_mode.temporal.upper()])
-
-        config.train_mode.compression = int(CompMetric[config.train_mode.compression.upper()])
-
         config.train_mode.patch_mask.type = int(PatchMaskMode[config.train_mode.patch_mask.type.upper()])
         assert type(config.train_mode.patch_mask.ratio) == float
         assert 0 < config.train_mode.patch_mask.ratio <= 1
         if config.train_mode.patch_mask.type == PatchMaskMode.GUIDE:
             assert type(config.train_mode.patch_mask.path) == str
             assert len(config.train_mode.patch_mask.path) > 0
-
-        assert type(config.train_mode.nerf_raw) == float
-        if config.train_mode.nerf_raw > 0:
-            assert 0 <= config.train_mode.nerf_raw <= 1.0
 
         config.train_mode.query_guide.type = int(
             QueryGuideMode[config.train_mode.query_guide.type.upper()]
@@ -673,25 +579,9 @@ class Detector(nn.Module):
             assert len(config.train_mode.query_guide.parts) > 0
             assert config.train_mode.query_guide.num_layers > 0
 
-        config.train_mode.prompt_guide.type = int(
-            QueryGuideMode[config.train_mode.prompt_guide.type.upper()]
-        )
-        if config.train_mode.prompt_guide.type == QueryGuideMode.NORMAL:
-            assert len(config.train_mode.prompt_guide.path) > 0
-            assert len(config.train_mode.prompt_guide.key) > 0
-            assert len(config.train_mode.prompt_guide.parts) > 0
-            assert config.frame_prompts > 0
-
         config.op_mode.attn_mode = [int(AttnMode[opt.upper()]) for opt in config.op_mode.attn_mode.split("+")]
         assert type(config.op_mode.attn_driver) == list
-        assert type(config.op_mode.temporal_position) == bool
         assert type(config.op_mode.attn_record) == bool
-        assert type(config.op_mode.global_prediction) == bool
-        assert type(config.op_mode.aug_query) == bool
-
-        assert type(config.op_mode.ema_frame) == float
-        if config.op_mode.ema_frame > 0:
-            assert 0 <= config.op_mode.ema_frame <= 1
 
         assert type(config.op_mode.frame_task) == bool
         assert not config.op_mode.frame_task or config.frame_prompts > 0
@@ -749,22 +639,6 @@ class Detector(nn.Module):
 
         self.decoder = Decoder(self, config, num_frames)
 
-        if (config.adapter.type == AdaptorMode.NONE):
-            self.adapter = None
-        elif (config.adapter.type == AdaptorMode.NORMAL):
-            self.adapter = Adaptor(config, self, num_frames=num_frames)
-            logging.info("Adapter operates without pretrained weights!!!")
-        elif (config.adapter.type == AdaptorMode.PRETRAIN):
-            self.adapter = Adaptor(config, self, num_frames=num_frames)
-            data = torch.load(config.adapter.path)
-            data = {
-                '.'.join(k.split('.')[1:]): v for k, v in data.items() if "adapter" in k
-            }
-            self.adapter.load_state_dict(data)
-            if (config.adapter.frozen):
-                self.adapter = disable_gradients(self.adapter)
-            logging.info(f"Adapter operates with pretrained weights:{config.adapter.path}")
-
         # transformations
         self.transform = self._transform(self.encoder.input_resolution)
 
@@ -783,13 +657,6 @@ class Detector(nn.Module):
                     )
                 )
                 self.task_projections.append(getattr(self, _name))
-
-        # trainable parameters
-        if (self.config.train_mode.temporal == TemporalMetric.RANK):
-            self.ranking_transform_param = nn.Parameter(
-                (self.encoder.width**-0.5) * torch.randn(self.encoder.width, 1),
-                requires_grad=True
-            )
 
         if (self.config.train_mode.patch_mask.type == PatchMaskMode.GUIDE):
             with open(self.config.train_mode.patch_mask.path, "rb") as f:
@@ -810,22 +677,7 @@ class Detector(nn.Module):
                 self.video_semantic_queries = torch.stack(self.video_semantic_queries)
                 self.video_semantic_queries.requires_grad_(False)
 
-        if (self.config.train_mode.prompt_guide.type == QueryGuideMode.NORMAL):
-            file_path = self.config.train_mode.prompt_guide.path
-            parts = self.config.train_mode.prompt_guide.parts
-            key = self.config.train_mode.prompt_guide.key
-            with open(file_path, "rb") as f:
-                prefetch_queries = pickle.load(f)
-                self.frame_semantic_queries = []
-                for i in range(self.config.prompt_layers):
-                    layer_results = []
-                    for part in parts:
-                        layer_results.append(prefetch_queries[key][part][i])
-                    self.frame_semantic_queries.append(torch.stack(layer_results))
-                self.frame_semantic_queries = torch.stack(self.frame_semantic_queries)
-                self.frame_semantic_queries.requires_grad_(False)
-
-    def predict(self, x, m, with_video_features=False, with_adapt_features=False, train=False):
+    def predict(self, x, m, with_video_features=False, train=False):
         b, t, c, h, w = x.shape
         features = {}
 
@@ -908,10 +760,6 @@ class Detector(nn.Module):
                 for k in kvs[i]:
                     kvs[i][k] = kvs[i][k][:, :, patch_indices]
 
-        if self.adapter:
-            logging.debug("perform feature adapting")
-            kvs = self.adapter(kvs)
-
         video_logits, video_features, layer_results, layer_qs = self.decoder(kvs, m)
 
         if image_logits == None:
@@ -921,12 +769,6 @@ class Detector(nn.Module):
 
         if with_video_features:
             features["video"] = video_features
-
-        if with_adapt_features:
-            if self.adapter:
-                features["adapt"] = kvs
-            else:
-                raise Exception("cannot return adaptive features without an adapter")
 
         features["layer_results"] = layer_results
 
@@ -938,23 +780,10 @@ class Detector(nn.Module):
         device = x.device
         b, t, c, h, w = x.shape
 
-        if (self.config.op_mode.ema_frame > 0):
-            logging.debug("perform ema frame conversion")
-            ema_ratio = self.config.op_mode.ema_frame
-            _x = torch.zeros((b, 1, c, h, w), device=x.device)
-            for i in range(t):
-                _x = _x * ema_ratio + x[:, i].unsqueeze(1) * (1 - ema_ratio)
-            x = _x
-            m = m[:, 0].unsqueeze(1)
-
         task_logits, features = self.predict(
             x,
             m,
             with_video_features=True,
-            with_adapt_features=(
-                (not self.adapter == None) and
-                (not self.config.train_mode.compression == CompMetric.NONE)
-            ),
             train=train
         )
 
@@ -971,8 +800,6 @@ class Detector(nn.Module):
         other_losses = {}
 
         layer_qs = features["layer_qs"]
-        kvs = features["kvs"]
-
         if not self.config.train_mode.query_guide.type == QueryGuideMode.NONE:
             # guide video learner class token
             if self.config.train_mode.query_guide.type == QueryGuideMode.NORMAL:
@@ -1001,42 +828,6 @@ class Detector(nn.Module):
                             dim=-1
                         )
                     ).mean(1)
-
-        if not self.config.train_mode.prompt_guide.type == QueryGuideMode.NONE:
-            # guide image extractor spatiotemporal prompt
-            if self.config.train_mode.prompt_guide.type == QueryGuideMode.NORMAL:
-                # create stack of features for layer wise prompt tuning parameters.
-                prompt_layers = self.config.prompt_layers
-                layer_prompt_qs = torch.stack(
-                    [
-                        kv["q"]["prompt"].flatten(-2)
-                        for kv in kvs[:prompt_layers]
-                    ],
-                    dim=2
-                )
-
-                num_prompts = self.encoder.prompts
-                num_queries = self.frame_semantic_queries.shape[1]
-                repeat_spread_semantic_queries = self.frame_semantic_queries.repeat(
-                    (1, num_prompts // num_queries, 1)
-                )
-                if (num_prompts % num_queries):
-                    repeat_spread_semantic_queries = torch.cat(
-                        (
-                            repeat_spread_semantic_queries,
-                            self.frame_semantic_queries[:, :(num_prompts % num_queries)]
-                        ),
-                        dim=1
-                    )
-                other_losses["prompt_sim"] = (
-                    (
-                        1 - torch.nn.functional.cosine_similarity(
-                            layer_prompt_qs,
-                            repeat_spread_semantic_queries.to(layer_prompt_qs.device),
-                            dim=-1
-                        )
-                    ) / 2
-                ).flatten(1).mean(1)
 
         return task_losses, task_logits, other_losses
 
