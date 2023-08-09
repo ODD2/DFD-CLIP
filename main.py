@@ -47,7 +47,6 @@ def get_config(params):
     C.tracking.enabled = False
     C.tracking.directory = 'logs'
     C.tracking.project_name = None
-    C.tracking.default_project_prefix = 'version'
     C.tracking.tool = 'wandb'
     C.tracking.main_metric = 'deepfake/ffpp/roc_auc'  # accuracy | roc_auc
     C.tracking.compare_fn = 'max'  # max | min
@@ -352,11 +351,7 @@ def main(params):
 
     # finished
     if config.tracking.enabled:
-        WANDB_PROJECT_DIR = '/'.join(PROJECT_DIR.split('/')[:-1] + [wandb.run.name])
-        logging.info(f"Rename directory: {PROJECT_DIR} -> {WANDB_PROJECT_DIR}")
-        os.rename(PROJECT_DIR, WANDB_PROJECT_DIR)
         wandb.finish()
-        PROJECT_DIR = WANDB_PROJECT_DIR
 
     send_to_telegram(f"Training Completed, Result Location: {PROJECT_DIR}")
 
@@ -372,19 +367,21 @@ def init_accelerator(config):
     )
 
     # init tracker parameters
-    project_name = config.tracking.default_project_prefix
     tracking_root = os.path.join(os.path.dirname(__file__), config.tracking.directory)
-    if config.tracking.project_name is None:
-        version = 0
-        while os.path.isdir(os.path.join(tracking_root, f'{project_name}_{version}')):
-            # keep increment untill no collision
-            version += 1
 
-        project_name = f'{project_name}_{version}'
-        PROJECT_DIR = os.path.join(tracking_root, project_name)
-    else:
-        project_name = re.sub('/', '_', config.tracking.project_name)
-        PROJECT_DIR = os.path.join(tracking_root, project_name, datetime.utcnow().strftime("%m%dT%H%M"))
+    # resolve project name
+    if config.tracking.project_name is None:
+        config.tracking.project_name = "temp"
+    project_name = re.sub('/', '_', config.tracking.project_name)
+
+    # init tracker.
+    wandb.init(project=project_name, mode="online" if config.tracking.enabled else "offline")
+
+    if (wandb.run.name == None):
+        wandb.run.name = datetime.utcnow().strftime("%m%dT%H%M")
+
+    # set project directory
+    PROJECT_DIR = os.path.join(tracking_root, project_name, wandb.run.name)
 
     # save current configuration
     os.makedirs(PROJECT_DIR, exist_ok=True)
@@ -392,10 +389,9 @@ def init_accelerator(config):
         with open(os.path.join(PROJECT_DIR, 'setting.yaml'), 'w') as f:
             f.write(config.dump())
 
-    # init tracker.
-    wandb.init(project=project_name, mode="online" if config.tracking.enabled else "offline")
-    # save config.
+    # upload config.
     wandb.save(glob_str=os.path.join(PROJECT_DIR, 'setting.yaml'), policy="now")
+
     # save run name in description.
     wandb.run.notes = wandb.run.name
 
