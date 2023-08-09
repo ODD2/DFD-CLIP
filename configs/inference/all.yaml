@@ -1,6 +1,22 @@
 data:
   eval:
     - category: Deepfake
+      types:
+        - REAL
+        - DF
+        - FS
+        - F2F
+        - NT
+      name: FFPP
+      pack: true
+      compressions:
+        - c23
+    - category: Deepfake
+      name: FSh
+      pack: true
+      compressions:
+        - c23
+    - category: Deepfake
       name: CDF
       pack: true
     - category: Deepfake

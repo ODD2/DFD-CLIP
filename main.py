@@ -457,6 +457,6 @@ if __name__ == "__main__":
     # run inference after training
     inference_runner(
         inference_arg_parser([
-            PROJECT_DIR, "--aux_file=configs/inference/all.yaml"
+            PROJECT_DIR, "configs/inference/all.yaml"
         ])
     )

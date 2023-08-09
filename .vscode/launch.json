@@ -27,7 +27,7 @@
                 // "configs/deepfake/nineteen/vpt/stage1/stage1(20,guide).yaml",
                 // "configs/deepfake/nineteen/vpt/stage2/query_guide/p20/all(vp20).yaml",
                 // "configs/deepfake/nineteen/vpt/e2e/test.yaml",
-                "configs/deepfake/nineteen/vpt/e2e/base-all.yaml",
+                "configs/train/base-all.yaml",
                 // "configs/deepfake/all.yaml",
                 // "configs/deepfake/0618/wgp+frame_attn+patch_mask-adapt.yaml",
                 // "configs/deepfake/2s(mode1):c23+resi+tune+dbal+5e-5.yaml",

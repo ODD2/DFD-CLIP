@@ -301,7 +301,8 @@ class FFPP(Dataset):
             'DF': 'DF/',
             'FS': 'FS/',
             'F2F': 'F2F/',
-            'NT': 'NT/'
+            'NT': 'NT/',
+            'FSh': 'FSh/'
         }
         self.category = config.category.lower()
         self.name = config.name.lower()
@@ -841,6 +842,27 @@ class FFPP(Dataset):
         speed = torch.tensor(_speed).repeat_interleave(num_comps, dim=0)
 
         return [frames, label, mask, comps, speed, index]
+
+
+class FSh(FFPP):
+    @staticmethod
+    def get_default_config():
+        C = FFPP.get_default_config()
+        C.types = ["FSh"]
+        return C
+
+    @staticmethod
+    def validate_config(config):
+        config = config.clone()
+        config = FFPP.validate_config(config)
+        config.defrost()
+
+        assert type(config.types) == list
+        assert len(config.types) > 1
+        assert config.types[0] == "FSh"
+
+        config.freeze()
+        return config
 
 
 class RPPG(Dataset):

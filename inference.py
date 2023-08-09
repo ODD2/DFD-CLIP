@@ -14,7 +14,7 @@ from yacs.config import CfgNode as CN
 from tqdm import tqdm
 import yaml
 
-from src.datasets import FFPP, CDF, DFDC
+from src.datasets import FFPP, CDF, DFDC, FSh
 from src.models import Detector, remap_weight
 from src.tools.notify import send_to_telegram
 
@@ -28,26 +28,16 @@ def get_config(cfg_file, args):
     # prerequisite: fetch the Deepfake detection task index during training.
     C.target_task = next(i for i, d in enumerate(preset.data.eval) if d.category == "Deepfake")
 
-    if args.aux_file:
-        with open(args.aux_file) as f:
-            aux = CN(yaml.safe_load(f))
+    with open(args.data_file) as f:
+        aux = CN(yaml.safe_load(f))
 
     C.data = CN()
     C.data.num_frames = preset.data.num_frames
     C.data.clip_duration = preset.data.clip_duration
 
-    unique_datasets = {
-        d.name: d
-        for d in (
-            preset.data.eval + (
-                aux.data.eval if args.aux_file else []
-            )
-        )
-    }
-
     C.data.datasets = [
         globals()[d.name].get_default_config().merge_from_other_cfg(d)
-        for d in unique_datasets.values()
+        for d in aux.data.eval
         if d.category == "Deepfake"
     ]
 
@@ -73,7 +63,7 @@ def collate_fn(batch):
 
 @torch.no_grad()
 def main(args):
-    root = path.join(args.artifacts_dir, "")
+    root = path.join(args.model_dir, "")
 
     config = get_config(path.join(root, f"{args.cfg_name}.yaml"), args)
 
@@ -172,6 +162,7 @@ def main(args):
             # statistic recordings
             stats[ds_cfg.name]["label"] += labels.tolist()
             stats[ds_cfg.name]["prob"] += pred_probs[:, 1].tolist()
+
             if args.modality == "video":
                 stats[ds_cfg.name]["meta"].append(meta)
 
@@ -218,21 +209,21 @@ def main(args):
 def parse_args(input_args=[]):
     parser = argparse.ArgumentParser(description="Deepfake detector with foundation models.")
     parser.add_argument(
-        "artifacts_dir",
+        "model_dir",
         type=str,
         help="Directory to optimized model artifacts"
+    )
+
+    parser.add_argument(
+        "data_file",
+        type=str,
+        help="Inference dataset configurations."
     )
 
     parser.add_argument(
         "--batch_size",
         type=int,
         default=16,
-    )
-
-    parser.add_argument(
-        "--aux_file",
-        type=str,
-        default=None,
     )
 
     parser.add_argument(
