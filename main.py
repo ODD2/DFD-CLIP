@@ -109,6 +109,7 @@ def get_config(params):
         C.tracking.enabled = False
         C.trainer.num_workers = 0
         C.trainer.batch_size = 1
+        C.trainer.batch_accum = 1
 
     # some sanity check
     for d_eval in C.data.eval:

@@ -112,20 +112,20 @@ def main(args):
 
         N = args.batch_size
         progress_bar = tqdm(test_dataloader, disable=not accelerator.is_local_main_process)
-        for i, data in enumerate(progress_bar):
+        for video_idx, data in enumerate(progress_bar):
             clips, label, masks, meta, task_index = *data[:3], data[-2], data[-1]
             if (len(clips) == 0):
-                logging.error(f"video '{i}' cannot provide clip for inference, skipping...")
+                logging.error(f"clip '{video_idx}' cannot provide clip for inference, skipping...")
                 pred_prob = torch.tensor([[0.5, 0.5]])
                 pred_label = torch.tensor([1 if label == 0 else 0])
                 label = torch.tensor([label], device="cpu")
             else:
                 logits = []
-                for i in range(0, len(clips), N):
+                for clip_idx in range(0, len(clips), N):
                     logits.append(
                         model.predict(
-                            torch.stack(clips[i:i + N]).to(accelerator.device),
-                            torch.stack(masks[i:i + N]).to(accelerator.device)
+                            torch.stack(clips[clip_idx:clip_idx + N]).to(accelerator.device),
+                            torch.stack(masks[clip_idx:clip_idx + N]).to(accelerator.device)
                         )[0][task_index].detach().to("cpu")
                     )
 

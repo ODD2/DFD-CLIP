@@ -93,15 +93,19 @@ class Evaluator(_Evaluator):
                         task_index = batch[-1]
                         video_logits = []
                         video_losses = []
-                        for i in range(0, len(clips), N):
+                        for clip_idx in range(0, len(clips), N):
                             task_losses, task_logits = self.model(
-                                torch.stack(clips[i:i + N]).to(self.accelerator.device),
+                                torch.stack(clips[clip_idx:clip_idx + N]).to(self.accelerator.device),
                                 [
-                                    (torch.tensor([label]*len(clips[i:i + N])).to(self.accelerator.device))
-                                    if i == task_index else None
-                                    for i in range(self.total_tasks)
+                                    (
+                                        torch.tensor(
+                                            [label] * len(clips[clip_idx:clip_idx + N])
+                                        ).to(self.accelerator.device)
+                                    )
+                                    if t_idx == task_index else None
+                                    for t_idx in range(self.total_tasks)
                                 ],
-                                torch.stack(masks[i:i + N]).to(self.accelerator.device)
+                                torch.stack(masks[clip_idx:clip_idx + N]).to(self.accelerator.device)
                             )
 
                             video_losses.append(task_losses[task_index].detach().to("cpu"))
