@@ -513,7 +513,6 @@ class Detector(nn.Module):
         C.train_mode.query_guide.path = ""
         C.train_mode.query_guide.key = ""
         C.train_mode.query_guide.parts = []
-        C.train_mode.query_guide.num_layers = -1
 
         # operation mode configurations
         C.op_mode = CN()
@@ -553,7 +552,7 @@ class Detector(nn.Module):
 
         config.decode_mode.type = int(DecodeMode[config.decode_mode.type.upper()])
         if config.decode_mode.type == DecodeMode.STRIDE:
-            assert config.decode_mode.indices == int
+            assert type(config.decode_mode.stride) == int
             assert config.decode_mode.stride > 0, "invalid value for decode stride."
         elif config.decode_mode.type == DecodeMode.INDEX:
             assert type(config.decode_mode.indices) == list
@@ -577,7 +576,6 @@ class Detector(nn.Module):
             assert len(config.train_mode.query_guide.path) > 0
             assert len(config.train_mode.query_guide.key) > 0
             assert len(config.train_mode.query_guide.parts) > 0
-            assert config.train_mode.query_guide.num_layers > 0
 
         config.op_mode.attn_mode = [int(AttnMode[opt.upper()]) for opt in config.op_mode.attn_mode.split("+")]
         assert type(config.op_mode.attn_driver) == list
@@ -803,31 +801,18 @@ class Detector(nn.Module):
         if not self.config.train_mode.query_guide.type == QueryGuideMode.NONE:
             # guide video learner class token
             if self.config.train_mode.query_guide.type == QueryGuideMode.NORMAL:
-                cls_part_layer = self.config.train_mode.query_guide.num_layers
-                if (cls_part_layer < len(self.layer_indices)):
-                    other_losses["cls_div"] = (
-                        torch.sum(
-                            torch.nn.functional.cosine_similarity(
-                                layer_qs[:, cls_part_layer:].unsqueeze(3),
-                                layer_qs[:, cls_part_layer:].unsqueeze(2),
+                other_losses["cls_sim"] = (
+                    torch.sum(
+                        (
+                            1 - torch.nn.functional.cosine_similarity(
+                                layer_qs.flatten(2, 3),
+                                self.video_semantic_queries.to(layer_qs.device),
                                 dim=-1
-                            ).abs().mean(3),
-                            dim=-1
-                        ) - 1
-                    ).mean(1)
-                if (cls_part_layer > 0):
-                    other_losses["cls_sim"] = (
-                        torch.sum(
-                            (
-                                1 - torch.nn.functional.cosine_similarity(
-                                    layer_qs[:, :cls_part_layer].flatten(2, 3),
-                                    self.video_semantic_queries[:cls_part_layer].to(layer_qs.device),
-                                    dim=-1
-                                )
-                            ) / 2,
-                            dim=-1
-                        )
-                    ).mean(1)
+                            )
+                        ) / 2,
+                        dim=-1
+                    )
+                ).mean(1)
 
         return task_losses, task_logits, other_losses
 

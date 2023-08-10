@@ -83,7 +83,6 @@ model:
       type: normal
       key: k
       parts: ["lips", "skin","nose","eyes"]
-      num_layers: 6
       path: "./misc/real_semantic_patches_v3_1000.pickle"
   dropout: 0.5
   losses:
