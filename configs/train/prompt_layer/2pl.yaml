@@ -68,7 +68,7 @@ model:
   optimizer: adamw
   frame_prompts: 10
   prompt_mode: deepc
-  prompt_layers: 1
+  prompt_layers: 2
   num_classes: 4
   architecture: ViT-B/16
   decode_mode: 
