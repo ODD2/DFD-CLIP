@@ -29,7 +29,10 @@ def cache_best_model(agent):
         main_metric = sum(target_metrics) / max(len(target_metrics), 1)
         current_best = getattr(agent, 'best_main_metric', main_metric)
 
-        if getattr(builtins, agent.compare_fn)(main_metric, current_best) == main_metric:
+        if (
+            getattr(builtins, agent.compare_fn)(main_metric, current_best) == main_metric or
+            abs(main_metric - current_best) < 1e-3
+        ):
             # update best
             logging.info(f'best model updated with "{agent.main_metric}" of {main_metric}(past SOTA: {current_best})')
             agent.best_main_metric = main_metric
