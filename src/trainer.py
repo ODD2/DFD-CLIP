@@ -347,7 +347,7 @@ class VPTTrainer(Trainer):
             self.lr_scheduler = LinearLR(
                 optimizer=self.optimizer,
                 start_factor=0.04,
-                total_iters=min((config.max_steps / 3), 3000)
+                total_iters=min((config.max_steps / 3), 1000)
             )
         else:
             raise NotImplementedError()
