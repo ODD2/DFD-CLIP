@@ -18,16 +18,6 @@ data:
     - FS
     - F2F
     - NT
-  # - category: Deepfake
-  #   name: DFDC
-  #   pack: true
-  #   root_dir: ./datasets/dfdc/
-  #   scale: 0.1
-  # - category: Deepfake
-  #   name: CDF
-  #   pack: true
-  #   root_dir: ./datasets/cdf/
-  #   scale: 1.0
   num_frames: 10
   train:
   - augmentation: normal+frame+rrc
@@ -54,40 +44,17 @@ evaluator:
     types:
     - accuracy
     - roc_auc
-  # - name: deepfake/cdf
-  #   types:
-  #   - accuracy
-  #   - roc_auc
-  # - name: deepfake/dfdc
-  #   types:
-  #   - accuracy
-  #   - roc_auc
   name: Evaluator
   num_workers: 8
 model:
   optimizer: adamw
-  frame_prompts: 10
-  prompt_mode: deepc
-  prompt_layers: 6
-  num_classes: 3
-  architecture: ViT-B/16
   decode_mode: 
     type: index
     indices: [6,7,8,9,10,11]
-  op_mode:
-    attn_mode: "frame+patch"
-    attn_driver: ["smax"]
-    frame_task: true
-  train_mode:
-    query_guide:
-      type: normal
-      key: k
-      parts: ["skin", "lips", "nose"]
-      path: "./misc/real_semantic_patches_v3_1000.pickle"
   dropout: 0.5
   losses:
   - auc_roc
-  name: Detector
+  name: DetectorEVL
   out_dim:
   - 2
   weight_decay: 0.01
@@ -97,7 +64,7 @@ system:
   evaluation_aggregate: 1
   mixed_precision: 'fp16'
   seed: 0
-  training_eval_interval: 30
+ training_eval_interval: 30
 tracking:
   compare_fn: max
   directory: logs/vlvpt

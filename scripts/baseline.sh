@@ -1,0 +1,1 @@
+python -m main --cfg configs/train/base-all.yaml --notes "baseline";\

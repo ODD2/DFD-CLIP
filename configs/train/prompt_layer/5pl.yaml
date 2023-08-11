@@ -11,7 +11,7 @@ data:
     pack: true
     pair: false
     root_dir: ./datasets/ffpp/
-    scale: 0.3
+    scale: 1.0
     types:
     - REAL
     - DF
@@ -93,24 +93,24 @@ model:
   weight_decay: 0.01
 system:
   deterministic_training: true
-  evaluation_interval: 50
-  evaluation_aggregate: 6
-  mixed_precision: 'no'
+  evaluation_interval: 100
+  evaluation_aggregate: 1
+  mixed_precision: 'fp16'
   seed: 0
-  training_eval_interval: 10
+  training_eval_interval: 30
 tracking:
-  compare_fn: min
+  compare_fn: max
   directory: logs/vlvpt
   enabled: true
-  main_metric: loss/deepfake/ffpp
+  main_metric: deepfake/ffpp/roc_auc
   project_name: VLVPT
   tool: wandb
 trainer:
-  early_stop: 3
+  early_stop: 10
   batch_accum: 3
   batch_size: 5
   learning_rate: 0.0005
-  max_steps: 9000
+  max_steps: 15000
   lr_scheduler: linear
   metrics:
   - name: deepfake/ffpp

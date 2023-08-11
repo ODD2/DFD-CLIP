@@ -69,11 +69,11 @@ model:
   frame_prompts: 10
   prompt_mode: deepc
   prompt_layers: 6
-  num_classes: 3
+  num_classes: 4
   architecture: ViT-B/16
   decode_mode: 
     type: index
-    indices: [6,7,8,9,10,11]
+    indices: [3,4,5,6,7,8,9,10,11]
   op_mode:
     attn_mode: "frame+patch"
     attn_driver: ["smax"]
@@ -82,7 +82,7 @@ model:
     query_guide:
       type: normal
       key: k
-      parts: ["skin", "lips", "nose"]
+      parts: ["lips", "skin","nose","eyes"]
       path: "./misc/real_semantic_patches_v3_1000.pickle"
   dropout: 0.5
   losses:

@@ -8,7 +8,7 @@ data:
     contrast: false
     detection_level: video
     name: FFPP
-    pack: true
+    pack: false
     pair: false
     root_dir: ./datasets/ffpp/
     scale: 1.0
@@ -28,7 +28,7 @@ data:
   #   pack: true
   #   root_dir: ./datasets/cdf/
   #   scale: 1.0
-  num_frames: 10
+  num_frames: 1
   train:
   - augmentation: normal+frame+rrc
     category: Deepfake
@@ -62,32 +62,18 @@ evaluator:
   #   types:
   #   - accuracy
   #   - roc_auc
-  name: Evaluator
+  name: VPTEvaluator
   num_workers: 8
 model:
   optimizer: adamw
   frame_prompts: 10
   prompt_mode: deepc
   prompt_layers: 6
-  num_classes: 3
   architecture: ViT-B/16
-  decode_mode: 
-    type: index
-    indices: [6,7,8,9,10,11]
-  op_mode:
-    attn_mode: "frame+patch"
-    attn_driver: ["smax"]
-    frame_task: true
-  train_mode:
-    query_guide:
-      type: normal
-      key: k
-      parts: ["skin", "lips", "nose"]
-      path: "./misc/real_semantic_patches_v3_1000.pickle"
   dropout: 0.5
   losses:
   - auc_roc
-  name: Detector
+  name: VPT
   out_dim:
   - 2
   weight_decay: 0.01
@@ -108,7 +94,7 @@ tracking:
 trainer:
   early_stop: 10
   batch_accum: 3
-  batch_size: 5
+  batch_size: 50
   learning_rate: 0.0005
   max_steps: 15000
   lr_scheduler: linear
@@ -119,5 +105,5 @@ trainer:
     - roc_auc
   mode:
     type: normal
-  name: Trainer
+  name: VPTTrainer
   num_workers: 12
