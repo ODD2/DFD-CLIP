@@ -13,7 +13,7 @@ from accelerate import Accelerator, DistributedDataParallelKwargs
 from yacs.config import CfgNode as CN
 from accelerate.utils import GradientAccumulationPlugin
 
-from src.models import Detector, VPT
+from src.models import Detector, VPT, DetectorEVL
 from src.datasets import RPPG, FFPP, DFDC, CDF
 from src.trainer import Trainer, VPTTrainer
 from src.evaluator import Evaluator, VPTEvaluator

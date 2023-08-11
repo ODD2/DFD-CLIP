@@ -14,6 +14,7 @@ import torch
 from torch import nn
 from . import clip
 import torchvision.transforms as T
+from . import EVL
 
 
 def remap_weight(
@@ -888,6 +889,209 @@ class Detector(nn.Module):
                 self.encoder.frame_prompt_embeddings.requires_grad
             ):
                 self.encoder.frame_prompt_drop.train()
+        return self
+
+
+class DetectorEVL(nn.Module):
+    """
+    Deepfake video detector (also a video classifier)
+
+    A series of video frames are first fed into CLIP image encoder
+    we export key and values for each frame in each layer of CLIP ViT
+    these k, v then further flatten on the temporal dimension
+    resulting in a series of tokens for each video.
+
+    The decoder aggregates the exported key and values in an attention manner 
+    a CLS query token is learned during decoding.
+    """
+    @staticmethod
+    def get_default_config():
+        C = CN()
+        C.name = "DetectorEVL"
+
+        # decode mode
+        C.decode_mode = CN()
+        C.decode_mode.type = DecodeMode.INDEX.name.lower()
+        # > argument for INDEX mode
+        C.decode_mode.indices = []
+        # > argument for STRIDE mode
+        C.decode_mode.stride = -1
+
+        # output dimension, for multiple tasks
+        C.out_dim = []
+
+        # output losses
+        C.losses = []
+
+        # regularization
+        C.dropout = 0.0
+        C.weight_decay = 0.01
+
+        # optimizer
+        C.optimizer = Optimizers.SGD.name.lower()
+
+        return C
+
+    @staticmethod
+    def validate_config(config):
+        config = config.clone()
+        config.defrost()
+
+        config.decode_mode.type = int(DecodeMode[config.decode_mode.type.upper()])
+        if config.decode_mode.type == DecodeMode.STRIDE:
+            assert type(config.decode_mode.stride) == int
+            assert config.decode_mode.stride > 0, "invalid value for decode stride."
+        elif config.decode_mode.type == DecodeMode.INDEX:
+            assert type(config.decode_mode.indices) == list
+            assert len(config.decode_mode.indices) > 0, "indices unspecified for decoding."
+
+        assert type(config.out_dim) == list
+
+        assert type(config.losses) == list
+
+        assert type(config.dropout) == float
+        assert 0 <= config.dropout <= 1
+
+        assert type(config.weight_decay) == float
+        assert 0 <= config.weight_decay <= 1
+
+        config.optimizer = int(Optimizers[config.optimizer.upper()])
+
+        config.freeze()
+        return config
+
+    def __init__(self, config, num_frames, accelerator):
+        super().__init__()
+        config = self.validate_config(config)
+        self.config = config
+
+        with accelerator.main_process_first():
+            self.encoder = clip.load(
+                "ViT-B/16",
+                prompt_mode="none",
+                frame_prompts=0,
+                prompt_layers=0,
+                attn_record=False
+            )[0].visual.float()
+
+        self.encoder = disable_gradients(self.encoder)
+
+        self.losses = []
+
+        for loss in config.losses:
+            if type(loss) == str:
+                self.losses.append(globals()[loss]())
+            else:
+                self.losses.append(globals()[loss.name](**(dict(loss.args) if "args" in loss else {})))
+
+        if (config.decode_mode.type == DecodeMode.STRIDE):
+            self.layer_indices = list(range(0, len(self.encoder.transformer.resblocks), config.decode_mode.stride))
+        elif (config.decode_mode.type == DecodeMode.INDEX):
+            self.layer_indices = config.decode_mode.indices
+
+        self.decoder = EVL.EVLDecoder(
+            num_frames=num_frames,
+            spatial_size=(14, 14),
+            num_layers=len(self.layer_indices),
+            in_feature_dim=768,
+            qkv_dim=768,
+            num_heads=12,
+            mlp_factor=4.0,
+            enable_temporal_conv=True,
+            enable_temporal_pos_embed=True,
+            enable_temporal_cross_attention=True,
+            mlp_dropout=self.config.dropout
+        )
+        self.head = nn.Sequential(
+            LayerNorm(768),
+            nn.Dropout(self.config.dropout),
+            nn.Linear(768, self.config.out_dim[0], bias=False)
+        )
+        # transformations
+        self.transform = self._transform(self.encoder.input_resolution)
+
+    def predict(self, x, m, with_video_features=False, train=False):
+        b, t, c, h, w = x.shape
+        features = {}
+
+        # get key and value from each CLIP ViT layer
+        kvs = self.encoder(x.flatten(0, 1), with_q=True, with_out=True, with_prompt=True)
+
+        # restore temporal dimension
+        for i in range(len(kvs)):
+            for k in kvs[i]:
+                for spec in kvs[i][k]:
+                    if not type(kvs[i][k][spec]) == type(None):
+                        kvs[i][k][spec] = kvs[i][k][spec].unflatten(0, (b, t))
+
+        # discard prompt features and reserve only the origin.
+        for i in range(len(kvs)):
+            for k in kvs[i]:
+                kvs[i][k] = kvs[i][k]["origin"]
+
+        # discard unwanted layers
+        kvs = [kvs[i] for i in self.layer_indices]
+
+        x = self.decoder(kvs)
+
+        task_logits = [self.head(x.squeeze(1))]
+
+        features = {}
+
+        return task_logits, features
+
+    def forward(self, x, y, m, comp=None, speed=None, train=False, single_task=None, *args, **kargs):
+        device = x.device
+        b, t, c, h, w = x.shape
+
+        task_logits, features = self.predict(
+            x,
+            m,
+            with_video_features=True,
+            train=train
+        )
+
+        task_losses = [
+            loss_fn(logits, labels) if single_task == None or i == single_task else 0
+            for i, loss_fn, logits, labels in zip(range(len(self.losses)), self.losses, task_logits, y)
+        ]
+
+        if not train:
+            return task_losses, task_logits
+
+        other_losses = {}
+
+        return task_losses, task_logits, other_losses
+
+    def configure_optimizers(self, lr):
+        params = [i for i in self.parameters() if i.requires_grad]
+        if (self.config.optimizer == Optimizers.SGD):
+            return torch.optim.SGD(
+                params=params,
+                lr=lr,
+                weight_decay=self.config.weight_decay,
+                momentum=0.95
+            )
+        elif (self.config.optimizer == Optimizers.ADAMW):
+            return torch.optim.AdamW(
+                params=params,
+                lr=lr,
+                weight_decay=self.config.weight_decay
+            )
+
+    def _transform(self, n_px):
+        return T.Compose([
+            T.Resize(n_px, interpolation=T.InterpolationMode.BICUBIC),
+            T.CenterCrop(n_px),
+            T.ConvertImageDtype(torch.float32),
+            T.Normalize((0.48145466, 0.4578275, 0.40821073),
+                        (0.26862954, 0.26130258, 0.27577711)),
+        ])
+
+    def train(self, mode=True):
+        super().train(mode)
+        if (mode):
+            self.encoder.eval()
         return self
 
 
