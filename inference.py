@@ -15,7 +15,7 @@ from tqdm import tqdm
 import yaml
 
 from src.datasets import FFPP, CDF, DFDC, FSh
-from src.models import Detector, remap_weight
+from src.models import Detector, remap_weight, DetectorEVL, VPT
 from src.tools.notify import send_to_telegram
 
 
@@ -74,7 +74,11 @@ def main(args):
 
     for ds_cfg in config.data.datasets:
         # prepare model and dataset
-        model = Detector(config.model, config.data.num_frames, accelerator).to(accelerator.device).eval()
+        model = globals()[config.model.name](
+            config.model,
+            config.data.num_frames,
+            accelerator
+        ).to(accelerator.device).eval()
         ds_cfg.pack = 1
 
         test_dataset = globals()[ds_cfg.name](

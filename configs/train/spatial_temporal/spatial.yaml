@@ -94,7 +94,7 @@ tracking:
 trainer:
   early_stop: 10
   batch_accum: 3
-  batch_size: 50
+  batch_size: 5
   learning_rate: 0.0005
   max_steps: 15000
   lr_scheduler: linear

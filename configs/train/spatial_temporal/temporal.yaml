@@ -86,7 +86,7 @@ model:
       path: "./misc/real_semantic_patches_v3_1000.pickle"
     prompt:
       frozen: true
-      weight: "./misc/restful-wave-89(10p,deepc).pt"
+      weight: "./misc/models/jumping-vortex-117(10p,deepc).pt"
   dropout: 0.5
   losses:
   - auc_roc
