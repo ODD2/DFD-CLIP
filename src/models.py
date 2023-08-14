@@ -585,7 +585,7 @@ class Detector(nn.Module):
 
         assert type(config.train_mode.prompt.frozen) == bool
         assert type(config.train_mode.prompt.weight) == str
-        assert (not config.train_mode.prompt.frozen) == config.op_mode.frame_task
+        assert (not config.train_mode.prompt.frozen) or not config.op_mode.frame_task
 
         config.op_mode.attn_mode = [int(AttnMode[opt.upper()]) for opt in config.op_mode.attn_mode.split("+")]
         assert type(config.op_mode.attn_driver) == list

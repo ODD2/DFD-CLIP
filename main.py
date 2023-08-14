@@ -426,6 +426,13 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
+        "--aux_file",
+        type=str,
+        default="configs/inference/all.yaml",
+        help="The configuration for inference after training."
+    )
+
+    parser.add_argument(
         "--debug",
         action="store_true",
         help="Debugging Mode"
@@ -459,6 +466,6 @@ if __name__ == "__main__":
     # run inference after training
     inference_runner(
         inference_arg_parser([
-            PROJECT_DIR, "configs/inference/all.yaml"
+            PROJECT_DIR, params.aux_file
         ])
     )
