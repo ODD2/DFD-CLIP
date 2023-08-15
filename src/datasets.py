@@ -296,6 +296,7 @@ class FFPP(Dataset):
         return config
 
     def __init__(self, config, num_frames, clip_duration, transform=None, accelerator=None, n_px=224, split='train', index=0):
+        config = self.validate_config(config)
         self.TYPE_DIRS = {
             'REAL': 'real/',
             'DF': 'DF/',
@@ -376,6 +377,22 @@ class FFPP(Dataset):
                         ],
                         p=1.
                     )
+            elif "robustness" in config.augmentation:
+                assert len(config.augmentation) == 1, print(len(config.augmentation), config.augmentation)
+                augmentations = [
+                    alb.Resize(
+                        self.n_px, self.n_px, cv2.INTER_CUBIC
+                    ),
+                    alb.RandomResizedCrop(
+                        self.n_px, self.n_px, scale=(0.7, 0.9), ratio=(1, 1)
+                    ),
+                    alb.HorizontalFlip(),
+                    alb.ToGray()
+                ]
+                self.sequence_augmentation = alb.ReplayCompose(
+                    augmentations,
+                    p=1.
+                )
             else:
                 if "normal" in config.augmentation:
                     augmentations = [

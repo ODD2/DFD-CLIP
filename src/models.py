@@ -546,7 +546,7 @@ class Detector(nn.Module):
         config.defrost()
 
         config.foundation = int(Foundations[config.foundation.upper()])
-        assert config.foundation == Foundations.CLIP
+        assert config.foundation == Foundations.CLIP or config.foundation == Foundations.FARL
 
         assert type(config.frame_prompts) == int
         assert config.frame_prompts >= 0
@@ -622,7 +622,13 @@ class Detector(nn.Module):
             elif config.foundation == Foundations.DINO2:
                 self.encoder = DINOv2()
             elif config.foundation == Foundations.FARL:
-                _model = clip.load("ViT-B/16")[0]
+                _model = clip.load(
+                    "ViT-B/16",
+                    prompt_mode=config.prompt_mode,
+                    frame_prompts=config.frame_prompts,
+                    prompt_layers=config.prompt_layers,
+                    attn_record=config.op_mode.attn_record
+                )[0]
                 _model.load_state_dict(
                     torch.load("./misc/FaRL-Base-Patch16-LAIONFace20M-ep64.pth")["state_dict"],
                     strict=False

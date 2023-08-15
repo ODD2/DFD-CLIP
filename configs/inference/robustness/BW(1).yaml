@@ -1,0 +1,14 @@
+data:
+  eval:
+    - category: Deepfake
+      types:
+        - REAL
+        - NT
+        - DF
+        - FS
+        - F2F
+      name: FFPP
+      pack: true
+      compressions:
+        - c23
+      root_dir: ./datasets/robustness/BW/1/

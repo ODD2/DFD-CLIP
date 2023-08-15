@@ -108,11 +108,11 @@ tracking:
   project_name: VLVPT
   tool: wandb
 trainer:
-  early_stop: 10
+  early_stop: 20
   batch_accum: 3
   batch_size: 5
   learning_rate: 0.0005
-  max_steps: 15000
+  max_steps: 20000
   lr_scheduler: linear
   metrics:
   - name: deepfake/ffpp

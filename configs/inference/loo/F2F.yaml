@@ -1,0 +1,10 @@
+data:
+  eval:
+    - category: Deepfake
+      types:
+        - REAL
+        - F2F
+      name: FFPP
+      pack: true
+      compressions:
+        - c23
