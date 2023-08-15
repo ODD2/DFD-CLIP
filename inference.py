@@ -79,7 +79,7 @@ def main(args):
             config.data.num_frames,
             accelerator
         ).to(accelerator.device).eval()
-        ds_cfg.pack = 1
+        ds_cfg.pack = True
 
         test_dataset = globals()[ds_cfg.name](
             ds_cfg,
@@ -206,7 +206,10 @@ def main(args):
     with open(path.join(root, f'stats_{timestamp}_{args.weight_mode}_{args.modality}.pickle'), "wb") as f:
         pickle.dump(stats, f)
 
-    send_to_telegram(f"Inference for '{root.split('/')[-2]}' Complete!")
+    send_to_telegram(
+        f"Inference for '{root.split('/')[-2]}' Complete!" +
+        (f"({args.notes})" if len(args.notes) > 0 else "")
+    )
     send_to_telegram(json.dumps(report, sort_keys=True, indent=4, separators=(',', ': ')))
 
 
@@ -257,6 +260,12 @@ def parse_args(input_args=[]):
         "--cfg_name",
         type=str,
         default="setting"
+    )
+
+    parser.add_argument(
+        "--notes",
+        type=str,
+        default=""
     )
 
     if len(input_args) == 0:
