@@ -377,6 +377,30 @@ class FFPP(Dataset):
                         ],
                         p=1.
                     )
+                elif "force-comp" in config.augmentation:
+                    logging.debug("Forcing Sharpness operation")
+                    self.sequence_augmentation = alb.ReplayCompose(
+                        [
+                            alb.ImageCompression(
+                                quality_lower=40, quality_upper=100, p=1.
+                            )
+                        ],
+                        p=1.
+                    )
+                elif "force-dscale" in config.augmentation:
+                    self.sequence_augmentation = alb.ReplayCompose(
+                        [
+                            RandomDownScale((2, 3), p=1)
+                        ],
+                        p=1.
+                    )
+                elif "force-sharpen" in config.augmentation:
+                    self.sequence_augmentation = alb.ReplayCompose(
+                        [
+                            alb.Sharpen(alpha=(0.2, 0.5), lightness=(0.5, 1.0), p=1)
+                        ],
+                        p=1.
+                    )
             elif "robustness" in config.augmentation:
                 assert len(config.augmentation) == 1, print(len(config.augmentation), config.augmentation)
                 augmentations = [
@@ -388,6 +412,33 @@ class FFPP(Dataset):
                     ),
                     alb.HorizontalFlip(),
                     alb.ToGray()
+                ]
+                self.sequence_augmentation = alb.ReplayCompose(
+                    augmentations,
+                    p=1.
+                )
+            elif "perturbations" in config.augmentation:
+                assert len(config.augmentation) == 1, print(len(config.augmentation), config.augmentation)
+                augmentations = [
+                    alb.Resize(
+                        self.n_px, self.n_px, cv2.INTER_CUBIC
+                    ),
+                    alb.RGBShift(
+                        (-20, 20), (-20, 20), (-20, 20), p=0.7
+                    ),
+                    alb.HueSaturationValue(
+                        hue_shift_limit=(-0.3, 0.3), sat_shift_limit=(-0.3, 0.3), val_shift_limit=(-0.3, 0.3), p=0.7
+                    ),
+                    alb.RandomBrightnessContrast(
+                        brightness_limit=(-0.3, 0.3), contrast_limit=(-0.3, 0.3), p=0.7
+                    ),
+                    alb.ImageCompression(
+                        quality_lower=40, quality_upper=100, p=0.7
+                    ),
+                    alb.OneOf([
+                        RandomDownScale((2, 3), p=1),
+                        alb.Sharpen(alpha=(0.2, 0.5), lightness=(0.5, 1.0), p=1),
+                    ], p=0.5)
                 ]
                 self.sequence_augmentation = alb.ReplayCompose(
                     augmentations,

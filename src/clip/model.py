@@ -186,8 +186,34 @@ class MultiheadAttention(nn.Module):
         self.attn_record = attn_record
         self.aff = None
 
-    def forward(self, q, *_, **__):
+    def forward(self, q, expres_embeddings_qkv=None, *_, **__):
         q, k, v = F.linear(q, self.in_proj_weight, self.in_proj_bias).chunk(3, dim=-1)
+        if (not type(expres_embeddings_qkv) == type(None)):
+            prompt_num = expres_embeddings_qkv.shape[1]
+            q = torch.cat(
+                (
+                    q[:, :1],
+                    q[:, 1:1+prompt_num] + expres_embeddings_qkv[0],
+                    q[:, 1+prompt_num:],
+                ),
+                dim=1
+            )
+            k = torch.cat(
+                (
+                    k[:, :1],
+                    k[:, 1:1+prompt_num] + expres_embeddings_qkv[1],
+                    k[:, 1+prompt_num:],
+                ),
+                dim=1
+            )
+            v = torch.cat(
+                (
+                    v[:, :1],
+                    v[:, 1:1+prompt_num] + expres_embeddings_qkv[2],
+                    v[:, 1+prompt_num:],
+                ),
+                dim=1
+            )
 
         view_as = (*q.shape[:2], self.n_head, -1)
         q = q.view(*view_as)
@@ -220,14 +246,21 @@ class ResidualAttentionBlock(nn.Module):
         self.ln_2 = LayerNorm(d_model)
         self.attn_mask = attn_mask
 
-    def attention(self, x: torch.Tensor):
+    def attention(self, x: torch.Tensor, expres_embeddings_qkv=None):
         self.attn_mask = self.attn_mask.to(dtype=x.dtype, device=x.device) if self.attn_mask is not None else None
-        return self.attn(x, x, x, need_weights=False, attn_mask=self.attn_mask)
+        return self.attn(
+            x,
+            expres_embeddings_qkv=expres_embeddings_qkv,
+            need_weights=False,
+            attn_mask=self.attn_mask,
+        )
 
     def forward(
         self,
         x: torch.Tensor,
         prompt_embeddings=None,
+        expres_embeddings_mlp=None,
+        expres_embeddings_qkv=None,
         prompt_mode=None,
         block_index=None
     ):
@@ -244,7 +277,7 @@ class ResidualAttentionBlock(nn.Module):
                     dim=1
                 )
             else:
-                if prompt_mode == "deepc":
+                if prompt_mode == "deepc" or prompt_mode == "expres":
                     prompt_memory = (
                         prompt_embeddings.unsqueeze(0).expand(x.shape[0], -1, -1) +
                         x[:, 1: 1 + prompt_num]
@@ -269,9 +302,15 @@ class ResidualAttentionBlock(nn.Module):
                     dim=1
                 )
 
-        a = self.attention(self.ln_1(x))
-        x = x + a['out']
-        x = x + self.mlp(self.ln_2(x))
+            a = self.attention(self.ln_1(x), expres_embeddings_qkv=expres_embeddings_qkv)
+            x = x + a['out']
+            if prompt_mode == "expres":
+                x[:, 1:1+prompt_num] += expres_embeddings_mlp
+            x = x + self.mlp(self.ln_2(x))
+        else:
+            a = self.attention(self.ln_1(x))
+            x = x + a['out']
+            x = x + self.mlp(self.ln_2(x))
 
         a['out'] = x
         return a
@@ -290,6 +329,8 @@ class Transformer(nn.Module):
         self,
         x: torch.Tensor,
         prompt_embeddings: torch.Tensor,
+        expres_embeddings_mlp: torch.Tensor,
+        expres_embeddings_qkv: torch.Tensor,
         prompt_mode: str,
         prompt_layers: int,
         with_out=False,
@@ -310,6 +351,8 @@ class Transformer(nn.Module):
                     x,
                     prompt_embeddings=prompt_embeddings[i],
                     prompt_mode=prompt_mode,
+                    expres_embeddings_mlp=expres_embeddings_mlp[i],
+                    expres_embeddings_qkv=expres_embeddings_qkv[i],
                     block_index=i
                 )
             else:
@@ -413,6 +456,17 @@ class VisionTransformer(nn.Module):
         else:
             self.frame_prompt_embeddings = None
 
+        if self.prompt_mode == "expres":
+            self.expres_embeddings_mlp = nn.Parameter(
+                scale * torch.randn(self.prompt_layers, self.frame_prompts, width),
+            )
+            self.expres_embeddings_qkv = nn.Parameter(
+                scale * torch.randn(self.prompt_layers, 3, self.frame_prompts, width),
+            )
+        else:
+            self.expres_embeddings_mlp = [None] * self.prompt_layers
+            self.expres_embeddings_qkv = [None] * self.prompt_layers
+
         if self.video_prompts > 0:
             self.video_prompt_drop = nn.Dropout(0.2)
             self.video_prompt_embeddings = nn.Parameter(
@@ -453,6 +507,8 @@ class VisionTransformer(nn.Module):
         return self.transformer(
             x,
             prompt_embeddings=prompt_embeddings,
+            expres_embeddings_mlp=self.expres_embeddings_mlp,
+            expres_embeddings_qkv=self.expres_embeddings_qkv,
             prompt_mode=self.prompt_mode,
             prompt_layers=self.prompt_layers,
             with_out=with_out,

@@ -66,12 +66,7 @@ class SBI(FFPP):
 
     def __init__(self, config, num_frames, clip_duration, transform, accelerator, split='train', n_px=224, index=0):
         self.TYPE_DIRS = {
-            'REAL': 'real/',
-            'DF': 'DF/',
-            'FS': 'FS/',
-            'F2F': 'F2F/',
-            'NT': 'NT/',
-            'FSh': 'FSh/'
+            'REAL': 'real/'
         }
         config = self.validate_config(config)
 
@@ -112,7 +107,7 @@ class SBI(FFPP):
         if split == "train":
             augmentations = [
                 alb.RandomResizedCrop(
-                    self.n_px, self.n_px, scale=(0.4, 1.0), ratio=(1, 1), p=1.0
+                    self.n_px, self.n_px, scale=(0.8, 1.0), ratio=(1, 1), p=1.0
                 ),
                 alb.HorizontalFlip()
             ]
@@ -167,7 +162,7 @@ class SBI(FFPP):
         self.src_alb_hue_margin = 0.1
         self.src_alb_bright_bound = (-0.1, 0.1)
         self.src_alb_bright_margin = 0.02
-        self.src_alb_dscale_bound = (1, 3)
+        self.src_alb_dscale_bound = (1, 2)
         self.src_alb_sharpen_params = {
             "alpha": (0.1, 0.25),
             "lightness": (0.25, 0.5)
@@ -187,14 +182,14 @@ class SBI(FFPP):
         self.gen_alb_rgb_bound = (-20, 20)
         self.gen_alb_hue_bound = (-0.3, 0.3)
         self.gen_alb_bright_bound = (-0.3, 0.3)
-        self.gen_alb_dscale_bound = (1, 3)
+        self.gen_alb_dscale_bound = (1, 1)
         self.gen_alb_compress_params = {
             "quality_lower": 40,
-            "quality_upper": 70,
+            "quality_upper": 100,
         }
         # - Blending Setups
         self.blend_random_ratio = (
-            [0.2, 0.4, 0.6, 0.8, 1, 1, 1]
+            [0.25, 0.5, 0.75, 1, 1, 1]
         )
         self.blend_gauss_variance = (
             [3.0, 5.0, 7.0, 100, 100]
@@ -466,22 +461,22 @@ class SBI(FFPP):
                     self.gen_alb_rgb_bound,
                     self.gen_alb_rgb_bound,
                     self.gen_alb_rgb_bound,
-                    p=0.5
+                    p=0.3
                 ),
                 alb.HueSaturationValue(
                     self.gen_alb_hue_bound,
                     self.gen_alb_hue_bound,
                     self.gen_alb_hue_bound,
-                    p=0.5
+                    p=0.3
                 ),
                 alb.RandomBrightnessContrast(
                     self.gen_alb_bright_bound,
                     self.gen_alb_bright_bound,
-                    p=0.5
+                    p=0.3
                 ),
                 RandomDownScale(
                     self.gen_alb_dscale_bound,
-                    p=0.5
+                    p=0.3
                 ),
                 alb.ImageCompression(
                     **self.gen_alb_compress_params,
@@ -533,7 +528,7 @@ class SBI(FFPP):
                         self.src_alb_rgb_bound,
                         self.src_alb_rgb_bound,
                         self.src_alb_rgb_bound,
-                        p=1
+                        p=0.3
                     ),
                     alb.HueSaturationValue(
                         self.src_alb_hue_bound,

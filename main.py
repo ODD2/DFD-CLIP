@@ -16,6 +16,7 @@ from accelerate.utils import GradientAccumulationPlugin
 
 from src.models import Detector, VPT, DetectorEVL
 from src.datasets import RPPG, FFPP, DFDC, CDF, FSh
+from src.sbi.datasets import SBI
 from src.trainer import Trainer, VPTTrainer
 from src.evaluator import Evaluator, VPTEvaluator
 from src.callbacks.timer import start_timer, end_timer
