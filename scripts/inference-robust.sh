@@ -4,6 +4,6 @@ for T in $TYPES;
 do
     for L in $LEVELS; 
         do
-        python -m inference "logs/vlvpt/VLVPT/rich-darkness-173" "configs/inference/robustness/$T($L).yaml" --notes "Robust:$T($L)"
+        python -m inference "$1" "configs/inference/robustness/$T($L).yaml" --notes "Robust:$T($L)"
     done
 done

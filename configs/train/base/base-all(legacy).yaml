@@ -106,7 +106,7 @@ tracking:
   project_name: VLVPT
   tool: wandb
 trainer:
-  early_stop: 20
+  early_stop: 10
   batch_accum: 3
   batch_size: 5
   learning_rate: 0.0005
